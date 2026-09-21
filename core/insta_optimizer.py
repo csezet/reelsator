@@ -149,11 +149,16 @@ class InstaOptimizer:
             )
 
         # Step 3: Smart Face-Centered Cropping to Instagram Aspect Ratio
-        framed_img = self.cropper.crop_and_scale(
-            clean_img,
-            aspect_ratio=config.aspect_ratio,
-            use_smart_face_centering=config.use_smart_face_centering,
-        )
+        if config.aspect_ratio == AspectRatio.ORIGINAL:
+            # Preserve exact pixel dimensions of the original image
+            framed_img = clean_img.resize(image.size, Image.LANCZOS)
+        else:
+            framed_img = self.cropper.crop_and_scale(
+                clean_img,
+                aspect_ratio=config.aspect_ratio,
+                use_smart_face_centering=config.use_smart_face_centering,
+            )
+
 
         # Step 4: Apply Physical Camera Optics & Film Emulation
         final_img = CameraOptics.apply_all(
