@@ -93,8 +93,8 @@ def create_rgba_transparent_png(path: str):
     img.save(path, format="PNG")
 
 
-def create_display_p3_jpeg(path: str):
-    """Creates a JPEG with an embedded authentic Display-P3 ICC profile."""
+def create_synthetic_display_p3_jpeg(path: str):
+    """Creates a JPEG with an embedded synthetic Display-P3 ICC profile."""
     img = Image.new("RGB", (120, 120), color=(200, 50, 50))
     icc_bytes = build_display_p3_icc_bytes()
     img.save(path, format="JPEG", icc_profile=icc_bytes)
@@ -157,18 +157,14 @@ def generate_all():
     create_orientation_6_jpeg(os.path.join(FIXTURES_DIR, "orientation_6.jpg"))
     create_rgba_transparent_png(os.path.join(FIXTURES_DIR, "rgba_transparent.png"))
 
-    # Display P3 real fixture
-    create_display_p3_jpeg(os.path.join(FIXTURES_DIR, "display_p3_real.jpg"))
-    create_display_p3_jpeg(os.path.join(FIXTURES_DIR, "display_p3.jpg"))
+    # Synthetic Display-P3 profile fixture
+    create_synthetic_display_p3_jpeg(os.path.join(FIXTURES_DIR, "synthetic_display_p3_profile.jpg"))
 
-    # C2PA synthetic fixtures per ISO/IEC 19566-5 & C2PA binding
+    # Synthetic C2PA fixtures per ISO/IEC 19566-5 & C2PA binding
     create_synthetic_c2pa_jumbf_jpeg(os.path.join(FIXTURES_DIR, "synthetic_c2pa_jumbf.jpg"))
-    create_synthetic_c2pa_jumbf_jpeg(os.path.join(FIXTURES_DIR, "real_c2pa_jpeg.jpg"))
-
     create_synthetic_c2pa_cabx_png(os.path.join(FIXTURES_DIR, "synthetic_c2pa_cabx.png"))
-    create_synthetic_c2pa_cabx_png(os.path.join(FIXTURES_DIR, "real_c2pa_png.png"))
 
-    print(f"Generated all fixtures in: {FIXTURES_DIR}")
+    print(f"Generated synthetic fixtures in: {FIXTURES_DIR}")
 
 
 if __name__ == "__main__":
