@@ -1,8 +1,11 @@
 """Integration tests verifying eradication of C2PA provenance manifests across image formats."""
 
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
+from typing import Optional
 from PIL import Image
 
 from core.insta_optimizer import InstaOptimizer, ProcessingConfig
@@ -10,6 +13,19 @@ from core.exif_spoofer import MetadataMode
 from core.smart_cropper import AspectRatio
 
 FIXTURES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
+
+
+def find_c2patool() -> Optional[str]:
+    """Finds c2patool binary if installed in PATH or system temp directory."""
+    which_path = shutil.which("c2patool")
+    if which_path:
+        return which_path
+    temp_dir = os.environ.get("TEMP", "")
+    if temp_dir:
+        candidate = os.path.join(temp_dir, "c2patool_extracted", "c2patool", "c2patool.exe")
+        if os.path.isfile(candidate):
+            return candidate
+    return None
 
 
 def detect_c2pa_manifest(file_path: str) -> bool:
@@ -189,7 +205,44 @@ class TestC2PAIntegration(unittest.TestCase):
                 self.assertGreater(px[0], 205)
                 self.assertLess(px[1], 35)
 
+    def test_c2pa_external_validator_interoperability(self):
+        """Interoperability test validating CAI signed fixture eradication via external official c2patool."""
+        c2patool = find_c2patool()
+        if not c2patool:
+            self.skipTest("c2patool not detected in environment; skipping external CLI validator test")
+
+        fixture_path = os.path.join(FIXTURES_DIR, "c2pa_cai_reference.jpg")
+        self.assertTrue(os.path.exists(fixture_path), f"Fixture not found: {fixture_path}")
+
+        # 1. External validator MUST confirm presence of active signed C2PA manifest in source
+        res_src = subprocess.run([c2patool, fixture_path], capture_output=True, text=True)
+        self.assertEqual(res_src.returncode, 0, f"External c2patool failed to read source manifest: {res_src.stderr}")
+        self.assertIn("active_manifest", res_src.stdout)
+
+        # 2. Process fixture with Reelsator in standard minimal mode
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_path = os.path.join(tmpdir, "output.jpg")
+            self.optimizer.process_file(fixture_path, out_path, self.config)
+
+            self.assertTrue(os.path.exists(out_path))
+
+            # 3. External validator MUST confirm absence of manifest (exit code != 0, 'No claim found')
+            res_out = subprocess.run([c2patool, out_path], capture_output=True, text=True)
+            self.assertNotEqual(res_out.returncode, 0, "External c2patool unexpectedly found manifest in Reelsator output")
+            err_msg = (res_out.stderr + res_out.stdout).lower()
+            self.assertTrue(
+                "no claim" in err_msg or "no jumbf" in err_msg or "error" in err_msg,
+                f"Unexpected c2patool output on sanitized image: {res_out.stderr} / {res_out.stdout}",
+            )
+
+            # 4. Output image must open cleanly as valid RGB
+            with Image.open(out_path) as res:
+                self.assertEqual(res.mode, "RGB")
+                self.assertGreater(res.size[0], 0)
+                self.assertGreater(res.size[1], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

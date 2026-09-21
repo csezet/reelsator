@@ -14,7 +14,7 @@
 * **Размер**: 132 518 байт.
 * **SHA-256**: `a2d14755db55de67a47c04090340d8266e892367be4104a45626d7a6fa6e9ffd`
 * **Содержимое**: Полноценный подписанный манифест происхождения C2PA, инкапсулированный в JPEG APP11 маркер JUMBF (claim store, assertions, signature).
-* **Назначение в тестах**: Независимый интеграционный тест эрадикации реальных подписанных манифестов C2PA модулем `core/c2pa_killer.py`. После обработки файл не должен содержать маркеров JUMBF / C2PA.
+* **Назначение в тестах**: Независимый интеграционный тест эрадикации реальных подписанных манифестов C2PA модулем `core/c2pa_killer.py`. Валидируется как внутренним парсером `detect_c2pa_manifest()`, так и официальным внешним CLI-валидатором `c2patool` (Content Authenticity Initiative). После обработки файл не содержит манифестов C2PA / JUMBF (возвращает `Error: No claim found`).
 
 ### `display_p3_reference.jpg`
 * **Источник**: Профиль из эталонного набора [W3C Web Platform Tests (WPT)](https://github.com/web-platform-tests/wpt/tree/master/html/canvas/element/manual/wide-gamut-canvas/resources).
