@@ -92,11 +92,17 @@ class ExifSpoofer:
 
         # Generate realistic date
         if capture_time is None:
-            # Recent time: within the last 1 to 12 hours
             delta_minutes = rng.randint(15, 720)
-            capture_time = datetime.now() - timedelta(minutes=delta_minutes)
+            if random_seed is not None:
+                # Deterministic reference timestamp for reproducible testing
+                base_time = datetime(2026, 9, 21, 12, 0, 0)
+                capture_time = base_time - timedelta(minutes=delta_minutes)
+            else:
+                # Recent time: within the last 1 to 12 hours
+                capture_time = datetime.now() - timedelta(minutes=delta_minutes)
 
         date_str = capture_time.strftime("%Y:%m:%d %H:%M:%S")
+
         subsec_str = f"{rng.randint(10, 999):03d}"
 
         if mode == MetadataMode.MINIMAL:

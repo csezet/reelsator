@@ -1,6 +1,7 @@
 """Settings and Tuning Control Panel for Reelsator."""
 
 import os
+from dataclasses import replace
 from PySide6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QComboBox, QSlider, QCheckBox, QLineEdit,
@@ -9,8 +10,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 
 from core.smart_cropper import AspectRatio
-from core.exif_spoofer import CameraPreset
+from core.exif_spoofer import CameraPreset, MetadataMode
 from core.insta_optimizer import ProcessingConfig
+
 
 
 class SettingsPanelWidget(QFrame):
@@ -110,9 +112,15 @@ class SettingsPanelWidget(QFrame):
         layout.addWidget(self.chk_face_detect)
 
         # --- Section 3: Camera Emulation (EXIF) ---
-        lbl_camera = QLabel("📷 ЭМУЛЯЦИЯ КАМЕРЫ (EXIF)", self)
+        lbl_camera = QLabel("📷 ЭМУЛЯЦИЯ КАМЕРЫ И EXIF", self)
         lbl_camera.setObjectName("sectionHeader")
         layout.addWidget(lbl_camera)
+
+        self.combo_metadata = QComboBox(self)
+        self.combo_metadata.addItem("Minimal (стандартный sRGB / без фейков)", MetadataMode.MINIMAL)
+        self.combo_metadata.addItem("Synthetic Camera (Apple iPhone / Sony)", MetadataMode.SYNTHETIC_CAMERA)
+        self.combo_metadata.currentIndexChanged.connect(self._on_ui_changed)
+        layout.addWidget(self.combo_metadata)
 
         self.combo_camera = QComboBox(self)
         self.combo_camera.addItem("Apple iPhone 15 Pro (f/1.78, 24mm)", CameraPreset.IPHONE_15_PRO)
@@ -122,6 +130,7 @@ class SettingsPanelWidget(QFrame):
         layout.addWidget(self.combo_camera)
 
         # --- Section 4: Optics & Anti-Detection Sliders ---
+
         lbl_optics = QLabel("🔬 ТОНКАЯ НАСТРОЙКА РЕАЛИЗМА", self)
         lbl_optics.setObjectName("sectionHeader")
         layout.addWidget(lbl_optics)
@@ -244,6 +253,11 @@ class SettingsPanelWidget(QFrame):
         if idx >= 0:
             self.combo_aspect.setCurrentIndex(idx)
 
+        # Metadata mode
+        idx_m = self.combo_metadata.findData(cfg.metadata_mode)
+        if idx_m >= 0:
+            self.combo_metadata.setCurrentIndex(idx_m)
+
         # Camera
         idx_c = self.combo_camera.findData(cfg.camera_preset)
         if idx_c >= 0:
@@ -285,16 +299,17 @@ class SettingsPanelWidget(QFrame):
         disrupt_f = self.slider_disrupt.value() / 100.0
         self.val_disrupt.setText(f"{disrupt_f:.2f}x")
 
-        cfg = ProcessingConfig(
+        cfg = replace(
+            self._current_config,
             aspect_ratio=self.combo_aspect.currentData(),
             camera_preset=self.combo_camera.currentData(),
+            metadata_mode=self.combo_metadata.currentData(),
             disrupt_strength=disrupt_f,
             grain_strength=grain_f,
             aberration_px=aberration_f,
             vignette_strength=vignette_f,
             enable_photonic_grade=self.chk_photonic.isChecked(),
             use_smart_face_centering=self.chk_face_detect.isChecked(),
-            jpeg_quality=90,
             enable_bayer_matrix=self.chk_bayer.isChecked(),
             bayer_strength=1.0 if self.chk_bayer.isChecked() else 0.0,
             enable_isp_enhancement=self.chk_isp.isChecked(),
@@ -304,5 +319,11 @@ class SettingsPanelWidget(QFrame):
         self.config_changed.emit(cfg)
 
 
+
     def get_current_config(self) -> ProcessingConfig:
         return self._current_config
+
+    def set_config(self, cfg: ProcessingConfig):
+        """Updates UI controls with the specified ProcessingConfig."""
+        self._apply_config_to_ui(cfg)
+        self.config_changed.emit(cfg)

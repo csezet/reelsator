@@ -1,11 +1,34 @@
 """Interactive Before / After Split-Screen Comparison Widget."""
 
+import math
 from typing import Optional
-from PySide6.QtWidgets import QWidget, QFrame, QHBoxLayout, QLabel
+from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, QPoint, QRect, QSize
 from PySide6.QtGui import QPainter, QPixmap, QColor, QPen, QFont, QMouseEvent, QPainterPath
 from PIL import Image
-import numpy as np
+
+
+def format_aspect_ratio(w: int, h: int) -> str:
+    """Returns human-readable aspect ratio string (e.g. 1:1, 4:5, 9:16)."""
+    if w <= 0 or h <= 0:
+        return ""
+    ratio = w / h
+    if abs(ratio - 1.0) < 0.02:
+        return "1:1"
+    elif abs(ratio - 4 / 5) < 0.02:
+        return "4:5"
+    elif abs(ratio - 5 / 4) < 0.02:
+        return "5:4"
+    elif abs(ratio - 9 / 16) < 0.02:
+        return "9:16"
+    elif abs(ratio - 16 / 9) < 0.02:
+        return "16:9"
+
+    gcd = math.gcd(w, h)
+    rw, rh = w // gcd, h // gcd
+    if rw < 20 and rh < 20:
+        return f"{rw}:{rh}"
+    return f"{ratio:.2f}:1"
 
 
 class ComparisonSliderWidget(QWidget):
@@ -20,9 +43,6 @@ class ComparisonSliderWidget(QWidget):
         self._pixmap_after: Optional[QPixmap] = None
         self._split_ratio: float = 0.5  # 0.0 to 1.0 (divider position)
         self._is_dragging: bool = False
-
-        self._badge_before_text = "Оригинал (ChatGPT)"
-        self._badge_after_text = "Instagram Ready (4:5)"
 
     def set_images(self, before_img: Image.Image, after_img: Optional[Image.Image] = None):
         """Sets PIL images for before and after display."""
@@ -63,35 +83,53 @@ class ComparisonSliderWidget(QWidget):
             painter.drawText(self.rect(), Qt.AlignCenter, "Нет активного предпросмотра")
             return
 
-        # Target rectangle maintaining aspect ratio
-        target_rect = self._compute_fitted_rect(self._pixmap_before.size(), w, h)
+        bw, bh = self._pixmap_before.width(), self._pixmap_before.height()
+        rect_before = self._compute_fitted_rect(self._pixmap_before.size(), w, h)
+        ar_before = format_aspect_ratio(bw, bh)
+        badge_before = f"До: {bw}×{bh} ({ar_before})"
 
         if not self._pixmap_after:
             # Single preview (before only)
-            painter.drawPixmap(target_rect, self._pixmap_before)
-            self._draw_badge(painter, target_rect.left() + 16, target_rect.top() + 16, "Оригинал (ChatGPT ИИ)", "#3b1e1e", "#f87171")
+            painter.drawPixmap(rect_before, self._pixmap_before)
+            self._draw_badge(painter, rect_before.left() + 14, rect_before.top() + 14, badge_before, "#2d1b1b", "#fca5a5")
             return
 
-        # Both before and after are present: render split view
-        split_x = int(target_rect.left() + target_rect.width() * self._split_ratio)
+        aw, ah = self._pixmap_after.width(), self._pixmap_after.height()
+        rect_after = self._compute_fitted_rect(self._pixmap_after.size(), w, h)
+        ar_after = format_aspect_ratio(aw, ah)
+        badge_after = f"После: {aw}×{ah} ({ar_after})"
 
-        # 1. Draw "After" (Instagram Ready) on full target rect
-        painter.drawPixmap(target_rect, self._pixmap_after)
+        # Compute common display bounds
+        union_rect = rect_before.united(rect_after)
+        split_x = int(union_rect.left() + union_rect.width() * self._split_ratio)
 
-        # 2. Draw "Before" (Original) clipped to left of split line
-        clip_left_rect = QRect(target_rect.left(), target_rect.top(), split_x - target_rect.left(), target_rect.height())
+        # Draw subtle framing indicator if aspect ratios differ
+        if rect_before != rect_after:
+            framing_pen = QPen(QColor(255, 255, 255, 30), 1, Qt.DashLine)
+            painter.setPen(framing_pen)
+            painter.drawRect(rect_after)
+
+        # 1. Draw "After" (Instagram Ready) clipped to the right of divider
         painter.save()
-        painter.setClipRect(clip_left_rect)
-        painter.drawPixmap(target_rect, self._pixmap_before)
+        clip_right = QRect(split_x, 0, w - split_x, h)
+        painter.setClipRect(clip_right)
+        painter.drawPixmap(rect_after, self._pixmap_after)
         painter.restore()
 
-        # 3. Draw Divider Line
+        # 2. Draw "Before" (Original) clipped to the left of divider
+        painter.save()
+        clip_left = QRect(0, 0, split_x, h)
+        painter.setClipRect(clip_left)
+        painter.drawPixmap(rect_before, self._pixmap_before)
+        painter.restore()
+
+        # 3. Draw Divider Line across union height
         divider_pen = QPen(QColor("#ffffff"), 2)
         painter.setPen(divider_pen)
-        painter.drawLine(split_x, target_rect.top(), split_x, target_rect.bottom())
+        painter.drawLine(split_x, union_rect.top(), split_x, union_rect.bottom())
 
         # 4. Draw Center Drag Handle
-        handle_y = target_rect.top() + target_rect.height() // 2
+        handle_y = union_rect.top() + union_rect.height() // 2
         painter.setBrush(QColor("#6366f1"))
         painter.setPen(QPen(QColor("#ffffff"), 2))
         painter.drawEllipse(QPoint(split_x, handle_y), 14, 14)
@@ -101,11 +139,11 @@ class ComparisonSliderWidget(QWidget):
         painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
         painter.drawText(QRect(split_x - 12, handle_y - 12, 24, 24), Qt.AlignCenter, "◀ ▶")
 
-        # 5. Draw Info Badges
-        self._draw_badge(painter, target_rect.left() + 14, target_rect.top() + 14, "До (ChatGPT ИИ)", "#2d1b1b", "#fca5a5")
-        self._draw_badge(painter, target_rect.right() - 170, target_rect.top() + 14, "После (Instagram Ready)", "#142c23", "#6ee7b7")
+        # 5. Draw Info Badges with dimensions & aspect ratios
+        self._draw_badge(painter, rect_before.left() + 14, rect_before.top() + 14, badge_before, "#2d1b1b", "#fca5a5")
+        self._draw_badge(painter, rect_after.right() - 14, rect_after.top() + 14, badge_after, "#142c23", "#6ee7b7", align_right=True)
 
-    def _draw_badge(self, painter: QPainter, x: int, y: int, text: str, bg_color: str, text_color: str):
+    def _draw_badge(self, painter: QPainter, x: int, y: int, text: str, bg_color: str, text_color: str, align_right: bool = False):
         painter.save()
         painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
         font_metrics = painter.fontMetrics()
@@ -113,7 +151,8 @@ class ComparisonSliderWidget(QWidget):
         badge_w = text_w + 16
         badge_h = 24
 
-        badge_rect = QRect(x, y, badge_w, badge_h)
+        actual_x = x - badge_w if align_right else x
+        badge_rect = QRect(actual_x, y, badge_w, badge_h)
         path = QPainterPath()
         path.addRoundedRect(badge_rect, 6, 6)
         painter.fillPath(path, QColor(bg_color))
@@ -142,11 +181,15 @@ class ComparisonSliderWidget(QWidget):
         if self._is_dragging:
             self._update_split_from_mouse(event.pos().x())
         else:
-            # Change cursor to horizontal resize when near divider
-            w = self.width()
-            split_x = int(w * self._split_ratio)
-            if abs(event.pos().x() - split_x) < 15 and self._pixmap_after:
-                self.setCursor(Qt.SplitHCursor)
+            if self._pixmap_after and self._pixmap_before:
+                rect_before = self._compute_fitted_rect(self._pixmap_before.size(), self.width(), self.height())
+                rect_after = self._compute_fitted_rect(self._pixmap_after.size(), self.width(), self.height())
+                union_rect = rect_before.united(rect_after)
+                split_x = int(union_rect.left() + union_rect.width() * self._split_ratio)
+                if abs(event.pos().x() - split_x) < 15:
+                    self.setCursor(Qt.SplitHCursor)
+                else:
+                    self.setCursor(Qt.ArrowCursor)
             else:
                 self.setCursor(Qt.ArrowCursor)
 
@@ -155,8 +198,16 @@ class ComparisonSliderWidget(QWidget):
             self._is_dragging = False
 
     def _update_split_from_mouse(self, mouse_x: int):
-        target_rect = self._compute_fitted_rect(self._pixmap_before.size(), self.width(), self.height())
-        if target_rect.width() > 0:
-            rel_x = mouse_x - target_rect.left()
-            self._split_ratio = max(0.02, min(0.98, rel_x / target_rect.width()))
+        if not self._pixmap_before:
+            return
+        rect_before = self._compute_fitted_rect(self._pixmap_before.size(), self.width(), self.height())
+        if self._pixmap_after:
+            rect_after = self._compute_fitted_rect(self._pixmap_after.size(), self.width(), self.height())
+            bounds = rect_before.united(rect_after)
+        else:
+            bounds = rect_before
+
+        if bounds.width() > 0:
+            rel_x = mouse_x - bounds.left()
+            self._split_ratio = max(0.02, min(0.98, rel_x / bounds.width()))
             self.update()

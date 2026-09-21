@@ -82,6 +82,45 @@ class TestReelsatorGUI(unittest.TestCase):
         worker.cancel()
         self.assertTrue(worker._is_cancelled)
 
+    def test_settings_panel_metadata_mode(self):
+        """Verify that metadata mode combo updates and reads config accurately."""
+        from core.exif_spoofer import MetadataMode
+        panel = SettingsPanelWidget()
+        panel.combo_metadata.setCurrentIndex(0)
+        cfg = panel.get_current_config()
+        self.assertEqual(cfg.metadata_mode, MetadataMode.MINIMAL)
+
+        panel.combo_metadata.setCurrentIndex(1)
+        cfg2 = panel.get_current_config()
+        self.assertEqual(cfg2.metadata_mode, MetadataMode.SYNTHETIC_CAMERA)
+
+        cfg.metadata_mode = MetadataMode.MINIMAL
+        panel.set_config(cfg)
+        self.assertEqual(panel.combo_metadata.currentData(), MetadataMode.MINIMAL)
+
+    def test_settings_panel_preserves_config_fields(self):
+        """Verify that UI adjustments preserve non-GUI fields via dataclasses.replace."""
+        panel = SettingsPanelWidget()
+        cfg = ProcessingConfig.ofm_master()
+        cfg.random_seed = 999
+        panel.set_config(cfg)
+
+        panel.slider_grain.setValue(50)
+        updated_cfg = panel.get_current_config()
+        self.assertEqual(updated_cfg.grain_strength, 0.5)
+        self.assertEqual(updated_cfg.random_seed, 999)
+
+    def test_comparison_slider_differing_aspect_ratios(self):
+        """Verify comparison slider handles images with different aspect ratios."""
+        slider = ComparisonSliderWidget()
+        img1 = Image.fromarray(np.zeros((100, 100, 3), dtype=np.uint8))
+        img2 = Image.fromarray(np.ones((125, 100, 3), dtype=np.uint8) * 128)
+        slider.set_images(img1, img2)
+        self.assertEqual(slider._pixmap_before.size().width(), 100)
+        self.assertEqual(slider._pixmap_before.size().height(), 100)
+        self.assertEqual(slider._pixmap_after.size().width(), 100)
+        self.assertEqual(slider._pixmap_after.size().height(), 125)
+
 
 if __name__ == "__main__":
     unittest.main()

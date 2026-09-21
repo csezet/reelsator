@@ -7,6 +7,7 @@ production pipeline.
 
 import io
 import os
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Optional, Callable, Tuple
 from PIL import Image
@@ -19,6 +20,7 @@ from .smart_cropper import SmartCropper, AspectRatio
 from .exif_spoofer import ExifSpoofer, CameraPreset, MetadataMode
 
 TupleImageResult = Tuple[Image.Image, bytes]
+MAX_IMAGE_PIXELS = 50_000_000  # 50 Megapixels safety limit
 
 
 @dataclass
@@ -39,7 +41,9 @@ class ProcessingConfig:
     sharpen_amount: float = 0.45
     alpha_background: Tuple[int, int, int] = (255, 255, 255)
     random_seed: Optional[int] = None
+    capture_time: Optional[datetime] = None
     overwrite_existing: bool = False
+
 
     @classmethod
     def ofm_master(cls) -> "ProcessingConfig":
@@ -140,8 +144,15 @@ class InstaOptimizer:
         config: ProcessingConfig,
     ) -> TupleImageResult:
         """Processes a PIL Image through the complete pipeline and returns (clean_image, exif_bytes)."""
+        w, h = image.size
+        if w * h > MAX_IMAGE_PIXELS:
+            raise ValueError(
+                f"Разрешение изображения ({w}x{h} = {w * h / 1e6:.1f} MP) превышает безопасный предел 50 MP"
+            )
+
         # Step 1: Strip all metadata containers, normalize orientation, color profile, and alpha
         clean_img = clean_image_buffer(image, alpha_background=config.alpha_background)
+        normalized_size = clean_img.size
 
         # Step 2: Perturb latent frequency watermarks / grid artifacts
         if config.disrupt_strength > 0:
@@ -155,8 +166,11 @@ class InstaOptimizer:
 
         # Step 3: Smart Face-Centered Cropping to Instagram Aspect Ratio
         if config.aspect_ratio == AspectRatio.ORIGINAL:
-            # Preserve exact pixel dimensions of the original image
-            framed_img = clean_img.resize(image.size, Image.LANCZOS)
+            # Preserve normalized dimensions (post-orientation transposition)
+            if clean_img.size != normalized_size:
+                framed_img = clean_img.resize(normalized_size, Image.LANCZOS)
+            else:
+                framed_img = clean_img
         else:
             framed_img = self.cropper.crop_and_scale(
                 clean_img,
@@ -186,6 +200,7 @@ class InstaOptimizer:
             width=w,
             height=h,
             device=config.camera_preset,
+            capture_time=config.capture_time,
             randomize_exposure=True,
             mode=mode_val,
             random_seed=config.random_seed,
@@ -204,8 +219,14 @@ class InstaOptimizer:
             config = ProcessingConfig.ofm_master()
 
         with Image.open(input_path) as src:
+            w, h = src.size
+            if w * h > MAX_IMAGE_PIXELS:
+                raise ValueError(
+                    f"Разрешение изображения ({w}x{h} = {w * h / 1e6:.1f} MP) превышает безопасный предел 50 MP"
+                )
             src.load()
             processed_img, exif_bytes = self.process_pil(src, config)
+
 
         # Ensure target directory exists
         target_dir = os.path.dirname(os.path.abspath(output_path))

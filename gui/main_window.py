@@ -9,8 +9,9 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame,
     QLabel, QPushButton, QProgressBar, QMessageBox, QSplitter
 )
-from PySide6.QtCore import Qt, QThread, Signal, Slot, QUrl
+from PySide6.QtCore import Qt, QThread, Signal, Slot, QUrl, QTimer
 from PySide6.QtGui import QDesktopServices, QIcon
+
 
 from core.insta_optimizer import InstaOptimizer, ProcessingConfig
 from core.pipeline import BatchPipeline, ProcessItemResult
@@ -107,10 +108,17 @@ class MainWindow(QMainWindow):
         self._active_files: List[str] = []
         self._current_preview_file: Optional[str] = None
         self._preview_generation: int = 0
-        self._preview_workers: set = set()
+        self._current_preview_worker: Optional[PreviewWorker] = None
+        self._pending_preview: bool = False
         self._batch_worker: Optional[BatchProcessWorker] = None
 
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(200)
+        self._preview_timer.timeout.connect(self._run_preview_worker)
+
         self._init_ui()
+
 
 
     def _init_ui(self):
@@ -305,21 +313,39 @@ class MainWindow(QMainWindow):
     def _trigger_preview_update(self):
         if not self._current_preview_file:
             return
+        # Debounce slider changes (200 ms)
+        self._preview_timer.start()
 
+    def _run_preview_worker(self):
+        if not self._current_preview_file:
+            return
+
+        # If previous worker is currently running, schedule next execution upon completion
+        if self._current_preview_worker and self._current_preview_worker.isRunning():
+            self._pending_preview = True
+            return
+
+        self._pending_preview = False
         self._preview_generation += 1
         gen = self._preview_generation
         cfg = self.settings_panel.get_current_config()
 
         worker = PreviewWorker(self.optimizer, self._current_preview_file, cfg, gen)
-        self._preview_workers.add(worker)
+        self._current_preview_worker = worker
         worker.preview_ready.connect(self._on_preview_ready)
         worker.preview_failed.connect(self._on_preview_failed)
         worker.finished.connect(lambda w=worker: self._cleanup_preview_worker(w))
         worker.start()
 
     def _cleanup_preview_worker(self, worker: PreviewWorker):
-        self._preview_workers.discard(worker)
+        if self._current_preview_worker is worker:
+            self._current_preview_worker = None
         worker.deleteLater()
+
+        # If a newer configuration arrived while worker was executing, run it now
+        if self._pending_preview and self._current_preview_file:
+            self._pending_preview = False
+            self._run_preview_worker()
 
     @Slot(int, object)
     def _on_preview_ready(self, generation: int, processed_img):
@@ -358,7 +384,7 @@ class MainWindow(QMainWindow):
     def _cancel_batch_processing(self):
         if self._batch_worker and self._batch_worker.isRunning():
             self._batch_worker.cancel()
-            self.lbl_status.setText("Отмена обработки... Ожидание завершения текущего файла.")
+            self.lbl_status.setText("Отмена обработки... Завершение текущего файла.")
             self.btn_cancel.setEnabled(False)
 
     @Slot(int, int, str, bool, str)
@@ -367,7 +393,7 @@ class MainWindow(QMainWindow):
         if success:
             self.lbl_status.setText(f"Обработано {current} из {total}: {filename}")
         else:
-            self.lbl_status.setText(f"Ошибка на {filename}: {error}")
+            self.lbl_status.setText(f"Статус {filename}: {error}")
         self.batch_list.update_item_status(current - 1, success, error)
 
     @Slot(list)
@@ -375,19 +401,36 @@ class MainWindow(QMainWindow):
         self.btn_process.setEnabled(True)
         self.btn_cancel.setVisible(False)
         self.btn_open_folder.setVisible(True)
+
         success_count = sum(1 for r in results if r.success)
-        failed_count = len(results) - success_count
-        status_text = f"🎉 Готово! Успешно: {success_count} из {len(results)} фото."
-        if failed_count > 0:
-            status_text += f" (Ошибок: {failed_count})"
-        self.lbl_status.setText(status_text)
-        QMessageBox.information(
-            self,
-            "Обработка завершена",
-            f"Успешно обработано: {success_count} из {len(results)} файлов.\n"
-            f"Ошибок: {failed_count}\n\n"
-            f"Папка сохранения:\n{self.settings_panel.get_output_dir()}",
-        )
+        cancelled_count = sum(1 for r in results if r.error_message == "Отменено пользователем")
+        failed_count = len(results) - success_count - cancelled_count
+
+        if cancelled_count > 0:
+            status_text = f"🛑 Отменено: успешно {success_count} из {len(results)} ({cancelled_count} отменено)."
+            self.lbl_status.setText(status_text)
+            QMessageBox.information(
+                self,
+                "Обработка прервана",
+                f"Обработка очереди была отменена пользователем.\n\n"
+                f"Успешно обработано: {success_count} из {len(results)}\n"
+                f"Отменено: {cancelled_count}\n"
+                f"Ошибок: {failed_count}\n\n"
+                f"Папка сохранения:\n{self.settings_panel.get_output_dir()}",
+            )
+        else:
+            status_text = f"🎉 Готово! Успешно: {success_count} из {len(results)} фото."
+            if failed_count > 0:
+                status_text += f" (Ошибок: {failed_count})"
+            self.lbl_status.setText(status_text)
+            QMessageBox.information(
+                self,
+                "Обработка завершена",
+                f"Успешно обработано: {success_count} из {len(results)} файлов.\n"
+                f"Ошибок: {failed_count}\n\n"
+                f"Папка сохранения:\n{self.settings_panel.get_output_dir()}",
+            )
+
 
 
     def _open_output_folder(self):

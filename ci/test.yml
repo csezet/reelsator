@@ -35,3 +35,16 @@ jobs:
           pip install -r requirements-dev.txt
       - name: Build executable with PyInstaller
         run: python build_exe.py
+      - name: Verify build artifact smoke check
+        shell: pwsh
+        run: |
+          if (!(Test-Path "dist/Reelsator/Reelsator.exe")) {
+            Write-Error "dist/Reelsator/Reelsator.exe does not exist"
+            exit 1
+          }
+          $size = (Get-Item "dist/Reelsator/Reelsator.exe").Length
+          if ($size -le 1000000) {
+            Write-Error "dist/Reelsator/Reelsator.exe is unexpectedly small: $size bytes"
+            exit 1
+          }
+          Write-Host "Build verification passed! Artifact size: $([math]::Round($size/1MB, 2)) MB"

@@ -301,6 +301,84 @@ class TestReelsatorCore(unittest.TestCase):
         arr2 = np.asarray(img2)
         np.testing.assert_array_equal(arr1, arr2)
 
+    def test_original_preserves_normalized_orientation_size(self):
+        """Verify that AspectRatio.ORIGINAL preserves post-orientation dimensions."""
+        rect_img = Image.new("RGB", (200, 100), color=(100, 150, 200))
+        exif_dict = {"0th": {piexif.ImageIFD.Orientation: 6}}
+        exif_bytes = piexif.dump(exif_dict)
+
+        buf = io.BytesIO()
+        rect_img.save(buf, format="JPEG", exif=exif_bytes)
+        buf.seek(0)
+
+        with Image.open(buf) as loaded:
+            cfg = ProcessingConfig.ofm_master()
+            cfg.aspect_ratio = AspectRatio.ORIGINAL
+            result, _ = InstaOptimizer().process_pil(loaded, cfg)
+            # Physical 200x100 + Orientation=6 rotates to 100x200
+            self.assertEqual(result.size, (100, 200))
+
+    def test_max_pixels_guard(self):
+        """Verify that images exceeding 50 MP raise ValueError before processing."""
+        huge_img = Image.new("RGB", (7072, 7072))  # 7072*7072 = 50,013,184 > 50,000,000
+        cfg = ProcessingConfig.ofm_master()
+        optimizer = InstaOptimizer()
+        with self.assertRaises(ValueError) as ctx:
+            optimizer.process_pil(huge_img, cfg)
+        self.assertIn("безопасный предел", str(ctx.exception))
+
+    def test_byte_identical_with_seed(self):
+        """Verify that identical random_seed produces byte-identical output files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src_path = os.path.join(tmpdir, "input.jpg")
+            out1 = os.path.join(tmpdir, "out1.jpg")
+            out2 = os.path.join(tmpdir, "out2.jpg")
+            self.test_img.save(src_path, format="JPEG")
+
+            cfg = ProcessingConfig.ofm_master()
+            cfg.random_seed = 12345
+
+            optimizer = InstaOptimizer()
+            optimizer.process_file(src_path, out1, cfg)
+            optimizer.process_file(src_path, out2, cfg)
+
+            with open(out1, "rb") as f1, open(out2, "rb") as f2:
+                b1 = f1.read()
+                b2 = f2.read()
+            self.assertEqual(b1, b2)
+
+    def test_batch_cancellation_reporting(self):
+        """Verify that cancelled batch records all items and flags cancelled items."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            f1 = os.path.join(tmpdir, "f1.jpg")
+            f2 = os.path.join(tmpdir, "f2.jpg")
+            f3 = os.path.join(tmpdir, "f3.jpg")
+            self.test_img.save(f1, format="JPEG")
+            self.test_img.save(f2, format="JPEG")
+            self.test_img.save(f3, format="JPEG")
+
+            pipeline = BatchPipeline()
+            cancel_requested = [False]
+
+            def progress_cb(curr, total, name, ok, err):
+                if curr == 1:
+                    cancel_requested[0] = True
+
+            results = pipeline.process_batch(
+                input_paths=[f1, f2, f3],
+                output_dir=tmpdir,
+                config=ProcessingConfig.ofm_master(),
+                progress_callback=progress_cb,
+                is_cancelled=lambda: cancel_requested[0],
+            )
+
+            self.assertEqual(len(results), 3)
+            self.assertTrue(results[0].success)
+            self.assertFalse(results[1].success)
+            self.assertEqual(results[1].error_message, "Отменено пользователем")
+            self.assertFalse(results[2].success)
+            self.assertEqual(results[2].error_message, "Отменено пользователем")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -87,11 +87,13 @@ class BatchPipeline:
         config: Optional[ProcessingConfig] = None,
         progress_callback: Optional[Callable[..., None]] = None,
         cancel_check: Optional[Callable[[], bool]] = None,
+        is_cancelled: Optional[Callable[[], bool]] = None,
     ) -> List[ProcessItemResult]:
         """Processes a list of files into the target output directory with collision resolution."""
         if config is None:
             config = ProcessingConfig.ofm_master()
 
+        cancel_fn = cancel_check or is_cancelled
         os.makedirs(output_dir, exist_ok=True)
         results = []
         total = len(input_paths)
@@ -107,8 +109,21 @@ class BatchPipeline:
                 progress_callback(idx, tot, fn, succ)
 
         for idx, input_path in enumerate(input_paths, start=1):
-            if cancel_check and cancel_check():
+            if cancel_fn and cancel_fn():
+                # Mark this and all remaining items in the queue as cancelled
+                for rem_idx in range(idx, total + 1):
+                    rem_path = input_paths[rem_idx - 1]
+                    rem_fn = os.path.basename(rem_path)
+                    item_res = ProcessItemResult(
+                        input_path=rem_path,
+                        output_path="",
+                        success=False,
+                        error_message="Отменено пользователем",
+                    )
+                    results.append(item_res)
+                    _notify(rem_idx, total, rem_fn, False, "Отменено пользователем")
                 break
+
 
             file_name = os.path.basename(input_path)
             base_name, _ = os.path.splitext(file_name)

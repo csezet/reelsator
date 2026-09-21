@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D4.svg)](https://microsoft.com/windows)
 [![Framework](https://img.shields.io/badge/GUI-PySide6%20(Qt%206)-41CD52.svg)](https://qt.io/)
-[![Tests](https://img.shields.io/badge/Tests-20%20Passed-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-27%20Passed-success.svg)]()
 [![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 
 **Reelsator** — высокопроизводительный инструмент для предпубликационной подготовки ИИ-сгенерированных изображений (ChatGPT Image, DALL-E, Midjourney, Stable Diffusion, Flux) под требования Instagram.
@@ -66,7 +66,7 @@ flowchart TD
 
 ## ⚠️ Важное примечание о детекции и водяных знаках
 
-* **Метаданные C2PA и манифесты**: Reelsator гарантированно удаляет контейнеры метаданных C2PA/JUMBF/XMP на уровне байтов и пикселей, что подтверждено верификацией в Hive Moderation и Sightengine.
+* **Метаданные C2PA и манифесты**: Reelsator гарантированно удаляет контейнеры метаданных C2PA/JUMBF/caBX/XMP на побайтовом уровне и рендерит чистый пиксельный буфер, исключая машиночитаемые сертификаты подлинности генератора (проверено unit-тестами на парсинг и санитизацию).
 * **Невидимые водяные знаки (SynthID и др.)**: Системы невидимой маркировки (например, Google SynthID) математически проектируются для сохранения устойчивости к масштабированию, сжатию и шумам. Reelsator вносит субпиксельные геометрические и частотные возмущения, однако ни одно программное средство не может гарантировать 100% удаление всех типов латентных меток без существенной деградации видимого изображения.
 
 ---

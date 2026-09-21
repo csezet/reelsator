@@ -1,0 +1,6 @@
+# Exact frozen dependencies for reproducible Windows builds
+PySide6==6.11.2
+Pillow==11.3.0
+opencv-python==4.13.0.92
+numpy==2.4.3
+piexif==1.1.3
