@@ -257,6 +257,7 @@ class SettingsPanelWidget(QFrame):
         idx_m = self.combo_metadata.findData(cfg.metadata_mode)
         if idx_m >= 0:
             self.combo_metadata.setCurrentIndex(idx_m)
+        self.combo_camera.setEnabled(cfg.metadata_mode == MetadataMode.SYNTHETIC_CAMERA)
 
         # Camera
         idx_c = self.combo_camera.findData(cfg.camera_preset)
@@ -299,11 +300,14 @@ class SettingsPanelWidget(QFrame):
         disrupt_f = self.slider_disrupt.value() / 100.0
         self.val_disrupt.setText(f"{disrupt_f:.2f}x")
 
+        selected_meta_mode = self.combo_metadata.currentData()
+        self.combo_camera.setEnabled(selected_meta_mode == MetadataMode.SYNTHETIC_CAMERA)
+
         cfg = replace(
             self._current_config,
             aspect_ratio=self.combo_aspect.currentData(),
             camera_preset=self.combo_camera.currentData(),
-            metadata_mode=self.combo_metadata.currentData(),
+            metadata_mode=selected_meta_mode,
             disrupt_strength=disrupt_f,
             grain_strength=grain_f,
             aberration_px=aberration_f,

@@ -18,7 +18,7 @@ from core.c2pa_killer import (
 from core.watermark_disruptor import disrupt_watermarks
 from core.camera_optics import CameraOptics
 from core.smart_cropper import SmartCropper, AspectRatio, TARGET_DIMENSIONS
-from core.exif_spoofer import ExifSpoofer, CameraPreset
+from core.exif_spoofer import ExifSpoofer, CameraPreset, MetadataMode
 from core.insta_optimizer import InstaOptimizer, ProcessingConfig
 from core.pipeline import BatchPipeline
 
@@ -155,6 +155,7 @@ class TestReelsatorCore(unittest.TestCase):
 
             optimizer = InstaOptimizer()
             config = ProcessingConfig.ofm_master()
+            config.metadata_mode = MetadataMode.SYNTHETIC_CAMERA
             res_path = optimizer.process_file(input_path, output_path, config)
 
             self.assertTrue(os.path.exists(res_path))

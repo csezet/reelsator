@@ -121,6 +121,57 @@ class TestReelsatorGUI(unittest.TestCase):
         self.assertEqual(slider._pixmap_after.size().width(), 100)
         self.assertEqual(slider._pixmap_after.size().height(), 125)
 
+    def test_layout_rects_for_different_aspects(self):
+        """Verify pure geometry computation preserves physical aspect ratios without distortion."""
+        from PySide6.QtCore import QSize
+        from gui.components.comparison_slider import compute_fitted_rect, compute_slider_geometry
+
+        before_size = QSize(1000, 1000)  # 1:1
+        after_size = QSize(800, 1000)    # 4:5
+
+        rb = compute_fitted_rect(before_size, 800, 600)
+        ra = compute_fitted_rect(after_size, 800, 600)
+
+        self.assertNotEqual(rb, ra)
+        # Both should fit inside container
+        self.assertLessEqual(rb.right(), 800)
+        self.assertLessEqual(ra.right(), 800)
+        self.assertLessEqual(rb.bottom(), 600)
+        self.assertLessEqual(ra.bottom(), 600)
+
+        # In 800x600 container, height 600 is limiting:
+        # 1:1 -> 600x600, centered horizontally at (800-600)//2 = 100
+        self.assertEqual(rb.width(), 600)
+        self.assertEqual(rb.height(), 600)
+        self.assertEqual(rb.left(), 100)
+
+        # 4:5 -> width = 600 * 0.8 = 480, height = 600, centered at (800-480)//2 = 160
+        self.assertEqual(ra.width(), 480)
+        self.assertEqual(ra.height(), 600)
+        self.assertEqual(ra.left(), 160)
+
+        # compute_slider_geometry checks
+        r_b, r_a, union_r, split_x = compute_slider_geometry(before_size, after_size, 800, 600, 0.5)
+        self.assertEqual(r_b, rb)
+        self.assertEqual(r_a, ra)
+        self.assertEqual(union_r, rb)  # union is 100..700 (width 600)
+        self.assertEqual(split_x, 400)  # 100 + 600 * 0.5 = 400
+
+    def test_slider_geometry_horizontal_aspects(self):
+        """Verify 16:9 vs 9:16 layout computation."""
+        from PySide6.QtCore import QSize
+        from gui.components.comparison_slider import compute_slider_geometry
+
+        before_size = QSize(1600, 900)   # 16:9 landscape
+        after_size = QSize(900, 1600)    # 9:16 portrait
+
+        r_b, r_a, union_r, split_x = compute_slider_geometry(before_size, after_size, 800, 600, 0.5)
+        self.assertIsNotNone(r_a)
+        self.assertTrue(union_r.contains(r_b))
+        self.assertTrue(union_r.contains(r_a))
+        self.assertGreaterEqual(split_x, union_r.left())
+        self.assertLessEqual(split_x, union_r.right())
+
 
 if __name__ == "__main__":
     unittest.main()

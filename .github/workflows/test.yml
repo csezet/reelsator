@@ -13,11 +13,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
+      - name: Install dependencies from lockfile
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      - name: Run unit tests
+          pip install -r requirements-lock.txt
+      - name: Run unit and integration tests
         run: python -m unittest discover tests -v
 
   build:
@@ -28,11 +28,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install dependencies
+      - name: Install dependencies from lockfiles
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
+          pip install -r requirements-lock.txt
+          pip install -r requirements-dev-lock.txt
       - name: Build executable with PyInstaller
         run: python build_exe.py
       - name: Verify build artifact smoke check

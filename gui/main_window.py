@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, QThread, Signal, Slot, QUrl, QTimer
 from PySide6.QtGui import QDesktopServices, QIcon
 
 
-from core.insta_optimizer import InstaOptimizer, ProcessingConfig
+from core.insta_optimizer import InstaOptimizer, ProcessingConfig, validate_image_dimensions
 from core.pipeline import BatchPipeline, ProcessItemResult
 from gui.theme import DARK_THEME_QSS
 from gui.components.drop_zone import DropZoneWidget
@@ -43,6 +43,7 @@ class PreviewWorker(QThread):
     def run(self):
         try:
             with Image.open(self.image_path) as src:
+                validate_image_dimensions(src)
                 src.load()
                 # Downscale for instant preview responsiveness if original is huge
                 w, h = src.size
@@ -300,8 +301,12 @@ class MainWindow(QMainWindow):
         self._current_preview_file = file_path
         try:
             with Image.open(file_path) as img:
+                validate_image_dimensions(img)
                 self.comparison_slider.set_images(img.copy())
             self._trigger_preview_update()
+        except ValueError as e:
+            logger.warning("Attempted to load oversized image for preview: %s", e)
+            QMessageBox.warning(self, "Слишком большое изображение", str(e))
         except Exception as e:
             QMessageBox.warning(self, "Ошибка чтения", f"Не удалось открыть файл:\n{e}")
 

@@ -1,8 +1,6 @@
-"""Legitimate Device EXIF Spoofer.
+"""Generates syntactically valid synthetic EXIF profiles modelled after selected camera devices.
 
-Generates 100% compliant Apple iPhone 15 Pro / 16 Pro Max and Sony Alpha camera EXIF
-profiles. Replaces missing or AI-flagged metadata with authentic photographic camera
-parameters (focal length, aperture f/1.78, ISO, shutter speed, MakerNotes, timestamps).
+The generated metadata is synthetic and does not reproduce proprietary MakerNotes.
 """
 
 from enum import Enum
@@ -25,7 +23,7 @@ class CameraPreset(str, Enum):
 
 
 class ExifSpoofer:
-    """Generates authentic smartphone camera EXIF bytes."""
+    """Generates synthetic camera and smartphone EXIF metadata profiles."""
 
     DEVICE_SPECS = {
         CameraPreset.IPHONE_15_PRO: {

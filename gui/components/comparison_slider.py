@@ -1,7 +1,7 @@
 """Interactive Before / After Split-Screen Comparison Widget."""
 
 import math
-from typing import Optional
+from typing import Optional, Tuple
 from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, QPoint, QRect, QSize
 from PySide6.QtGui import QPainter, QPixmap, QColor, QPen, QFont, QMouseEvent, QPainterPath
@@ -29,6 +29,45 @@ def format_aspect_ratio(w: int, h: int) -> str:
     if rw < 20 and rh < 20:
         return f"{rw}:{rh}"
     return f"{ratio:.2f}:1"
+
+
+def compute_fitted_rect(img_size: QSize, container_w: int, container_h: int) -> QRect:
+    """Computes a centered QRect fitting img_size into container dimensions preserving aspect ratio."""
+    img_w, img_h = img_size.width(), img_size.height()
+    if img_w <= 0 or img_h <= 0 or container_w <= 0 or container_h <= 0:
+        return QRect(0, 0, max(0, container_w), max(0, container_h))
+
+    ratio = min(container_w / img_w, container_h / img_h)
+    new_w = int(img_w * ratio)
+    new_h = int(img_h * ratio)
+    x = (container_w - new_w) // 2
+    y = (container_h - new_h) // 2
+    return QRect(x, y, new_w, new_h)
+
+
+def compute_slider_geometry(
+    before_size: QSize,
+    after_size: Optional[QSize],
+    container_w: int,
+    container_h: int,
+    split_ratio: float = 0.5,
+) -> Tuple[QRect, Optional[QRect], QRect, int]:
+    """Computes pure layout geometry for split comparison viewer.
+
+    Returns:
+        (rect_before, rect_after, union_rect, split_x)
+    """
+    rect_before = compute_fitted_rect(before_size, container_w, container_h)
+    if after_size is not None and not after_size.isEmpty():
+        rect_after = compute_fitted_rect(after_size, container_w, container_h)
+        union_rect = rect_before.united(rect_after)
+    else:
+        rect_after = None
+        union_rect = rect_before
+
+    clamped_ratio = max(0.02, min(0.98, split_ratio))
+    split_x = int(union_rect.left() + union_rect.width() * clamped_ratio)
+    return rect_before, rect_after, union_rect, split_x
 
 
 class ComparisonSliderWidget(QWidget):
@@ -65,6 +104,10 @@ class ComparisonSliderWidget(QWidget):
         qimg = QImage(im_data, pil_img.width, pil_img.height, pil_img.width * 3, QImage.Format_RGB888)
         return QPixmap.fromImage(qimg)
 
+    def _compute_fitted_rect(self, img_size: QSize, container_w: int, container_h: int) -> QRect:
+        """Instance helper preserving API compatibility."""
+        return compute_fitted_rect(img_size, container_w, container_h)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -83,25 +126,28 @@ class ComparisonSliderWidget(QWidget):
             painter.drawText(self.rect(), Qt.AlignCenter, "Нет активного предпросмотра")
             return
 
+        after_size = self._pixmap_after.size() if self._pixmap_after else None
+        rect_before, rect_after, union_rect, split_x = compute_slider_geometry(
+            self._pixmap_before.size(),
+            after_size,
+            w,
+            h,
+            self._split_ratio,
+        )
+
         bw, bh = self._pixmap_before.width(), self._pixmap_before.height()
-        rect_before = self._compute_fitted_rect(self._pixmap_before.size(), w, h)
         ar_before = format_aspect_ratio(bw, bh)
         badge_before = f"До: {bw}×{bh} ({ar_before})"
 
-        if not self._pixmap_after:
+        if not self._pixmap_after or rect_after is None:
             # Single preview (before only)
             painter.drawPixmap(rect_before, self._pixmap_before)
             self._draw_badge(painter, rect_before.left() + 14, rect_before.top() + 14, badge_before, "#2d1b1b", "#fca5a5")
             return
 
         aw, ah = self._pixmap_after.width(), self._pixmap_after.height()
-        rect_after = self._compute_fitted_rect(self._pixmap_after.size(), w, h)
         ar_after = format_aspect_ratio(aw, ah)
         badge_after = f"После: {aw}×{ah} ({ar_after})"
-
-        # Compute common display bounds
-        union_rect = rect_before.united(rect_after)
-        split_x = int(union_rect.left() + union_rect.width() * self._split_ratio)
 
         # Draw subtle framing indicator if aspect ratios differ
         if rect_before != rect_after:
@@ -160,18 +206,6 @@ class ComparisonSliderWidget(QWidget):
         painter.drawText(badge_rect, Qt.AlignCenter, text)
         painter.restore()
 
-    def _compute_fitted_rect(self, img_size: QSize, container_w: int, container_h: int) -> QRect:
-        img_w, img_h = img_size.width(), img_size.height()
-        if img_w == 0 or img_h == 0:
-            return QRect(0, 0, container_w, container_h)
-
-        ratio = min(container_w / img_w, container_h / img_h)
-        new_w = int(img_w * ratio)
-        new_h = int(img_h * ratio)
-        x = (container_w - new_w) // 2
-        y = (container_h - new_h) // 2
-        return QRect(x, y, new_w, new_h)
-
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton and self._pixmap_after:
             self._is_dragging = True
@@ -182,10 +216,13 @@ class ComparisonSliderWidget(QWidget):
             self._update_split_from_mouse(event.pos().x())
         else:
             if self._pixmap_after and self._pixmap_before:
-                rect_before = self._compute_fitted_rect(self._pixmap_before.size(), self.width(), self.height())
-                rect_after = self._compute_fitted_rect(self._pixmap_after.size(), self.width(), self.height())
-                union_rect = rect_before.united(rect_after)
-                split_x = int(union_rect.left() + union_rect.width() * self._split_ratio)
+                _, _, union_rect, split_x = compute_slider_geometry(
+                    self._pixmap_before.size(),
+                    self._pixmap_after.size(),
+                    self.width(),
+                    self.height(),
+                    self._split_ratio,
+                )
                 if abs(event.pos().x() - split_x) < 15:
                     self.setCursor(Qt.SplitHCursor)
                 else:
@@ -200,14 +237,16 @@ class ComparisonSliderWidget(QWidget):
     def _update_split_from_mouse(self, mouse_x: int):
         if not self._pixmap_before:
             return
-        rect_before = self._compute_fitted_rect(self._pixmap_before.size(), self.width(), self.height())
-        if self._pixmap_after:
-            rect_after = self._compute_fitted_rect(self._pixmap_after.size(), self.width(), self.height())
-            bounds = rect_before.united(rect_after)
-        else:
-            bounds = rect_before
+        after_size = self._pixmap_after.size() if self._pixmap_after else None
+        _, _, union_rect, _ = compute_slider_geometry(
+            self._pixmap_before.size(),
+            after_size,
+            self.width(),
+            self.height(),
+            self._split_ratio,
+        )
 
-        if bounds.width() > 0:
-            rel_x = mouse_x - bounds.left()
-            self._split_ratio = max(0.02, min(0.98, rel_x / bounds.width()))
+        if union_rect.width() > 0:
+            rel_x = mouse_x - union_rect.left()
+            self._split_ratio = max(0.02, min(0.98, rel_x / union_rect.width()))
             self.update()

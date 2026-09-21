@@ -23,11 +23,22 @@ TupleImageResult = Tuple[Image.Image, bytes]
 MAX_IMAGE_PIXELS = 50_000_000  # 50 Megapixels safety limit
 
 
+def validate_image_dimensions(image: Image.Image) -> None:
+    """Validates that image dimensions do not exceed the safe limit before raster allocation."""
+    w, h = image.size
+    pixels = w * h
+    if pixels > MAX_IMAGE_PIXELS:
+        raise ValueError(
+            f"Разрешение изображения {w}x{h} ({pixels / 1e6:.1f} MP) "
+            f"превышает безопасный предел {MAX_IMAGE_PIXELS / 1e6:.0f} MP"
+        )
+
+
 @dataclass
 class ProcessingConfig:
     aspect_ratio: AspectRatio = AspectRatio.FEED_4_5
     camera_preset: CameraPreset = CameraPreset.IPHONE_15_PRO
-    metadata_mode: MetadataMode = MetadataMode.SYNTHETIC_CAMERA
+    metadata_mode: MetadataMode = MetadataMode.MINIMAL
     disrupt_strength: float = 1.0
     grain_strength: float = 1.0
     aberration_px: float = 0.65
@@ -144,11 +155,7 @@ class InstaOptimizer:
         config: ProcessingConfig,
     ) -> TupleImageResult:
         """Processes a PIL Image through the complete pipeline and returns (clean_image, exif_bytes)."""
-        w, h = image.size
-        if w * h > MAX_IMAGE_PIXELS:
-            raise ValueError(
-                f"Разрешение изображения ({w}x{h} = {w * h / 1e6:.1f} MP) превышает безопасный предел 50 MP"
-            )
+        validate_image_dimensions(image)
 
         # Step 1: Strip all metadata containers, normalize orientation, color profile, and alpha
         clean_img = clean_image_buffer(image, alpha_background=config.alpha_background)
@@ -219,11 +226,7 @@ class InstaOptimizer:
             config = ProcessingConfig.ofm_master()
 
         with Image.open(input_path) as src:
-            w, h = src.size
-            if w * h > MAX_IMAGE_PIXELS:
-                raise ValueError(
-                    f"Разрешение изображения ({w}x{h} = {w * h / 1e6:.1f} MP) превышает безопасный предел 50 MP"
-                )
+            validate_image_dimensions(src)
             src.load()
             processed_img, exif_bytes = self.process_pil(src, config)
 

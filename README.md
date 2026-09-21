@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D4.svg)](https://microsoft.com/windows)
 [![Framework](https://img.shields.io/badge/GUI-PySide6%20(Qt%206)-41CD52.svg)](https://qt.io/)
-[![Tests](https://img.shields.io/badge/Tests-27%20Passed-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-34%20Passed-success.svg)]()
 [![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 
 **Reelsator** — высокопроизводительный инструмент для предпубликационной подготовки ИИ-сгенерированных изображений (ChatGPT Image, DALL-E, Midjourney, Stable Diffusion, Flux) под требования Instagram.
@@ -77,11 +77,17 @@ flowchart TD
 * Python 3.10+
 * Windows 10 / 11
 
-### Установка:
+### Установка для разработки (Development):
 ```bash
 git clone https://github.com/csezet/reelsator.git
 cd reelsator
 pip install -r requirements.txt
+```
+
+### Воспроизводимая сборка (Reproducible Lockfile Install):
+```bash
+# Точно зафиксированные версии зависимостей
+pip install -r requirements-lock.txt
 ```
 
 ### Запуск приложения:
@@ -96,10 +102,11 @@ python -m unittest discover tests -v
 
 ### Сборка автономного .exe:
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements-lock.txt
+pip install -r requirements-dev-lock.txt
 python build_exe.py
 ```
-Собранный дистрибутив размещается в папке `dist/Reelsator/Reelsator.exe`.
+Собранный дистрибутив размещается в папке `dist/Reelsator/Reelsator.exe`. Автоматическая проверка сборки выполняется в GitHub Actions (`.github/workflows/test.yml`).
 
 ---
 
