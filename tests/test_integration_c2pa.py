@@ -59,39 +59,41 @@ class TestC2PAIntegration(unittest.TestCase):
 
     def test_c2pa_jpeg_provenance_eradication(self):
         """Verify C2PA APP11 JUMBF manifest is detected before and eradicated after processing."""
-        fixture_path = os.path.join(FIXTURES_DIR, "real_c2pa_jpeg.jpg")
-        self.assertTrue(os.path.exists(fixture_path), f"Fixture not found: {fixture_path}")
-        self.assertTrue(detect_c2pa_manifest(fixture_path), "Validator failed to detect C2PA in fixture")
+        for fixture_name in ("synthetic_c2pa_jumbf.jpg", "real_c2pa_jpeg.jpg"):
+            fixture_path = os.path.join(FIXTURES_DIR, fixture_name)
+            self.assertTrue(os.path.exists(fixture_path), f"Fixture not found: {fixture_path}")
+            self.assertTrue(detect_c2pa_manifest(fixture_path), f"Validator failed to detect C2PA in {fixture_name}")
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            out_path = os.path.join(tmpdir, "output.jpg")
-            self.optimizer.process_file(fixture_path, out_path, self.config)
+            with tempfile.TemporaryDirectory() as tmpdir:
+                out_path = os.path.join(tmpdir, "output.jpg")
+                self.optimizer.process_file(fixture_path, out_path, self.config)
 
-            self.assertTrue(os.path.exists(out_path))
-            # Manifest must be completely eliminated
-            self.assertFalse(detect_c2pa_manifest(out_path), "C2PA manifest still detected after Reelsator")
+                self.assertTrue(os.path.exists(out_path))
+                # Manifest must be completely eliminated
+                self.assertFalse(detect_c2pa_manifest(out_path), f"C2PA manifest still detected in output of {fixture_name}")
 
-            # Image must be valid RGB
-            with Image.open(out_path) as res:
-                self.assertEqual(res.mode, "RGB")
-                self.assertEqual(res.size, (160, 160))
+                # Image must be valid RGB
+                with Image.open(out_path) as res:
+                    self.assertEqual(res.mode, "RGB")
+                    self.assertEqual(res.size, (160, 160))
 
     def test_c2pa_png_provenance_eradication(self):
         """Verify C2PA caBX chunk is detected before and eradicated after processing."""
-        fixture_path = os.path.join(FIXTURES_DIR, "real_c2pa_png.png")
-        self.assertTrue(os.path.exists(fixture_path), f"Fixture not found: {fixture_path}")
-        self.assertTrue(detect_c2pa_manifest(fixture_path), "Validator failed to detect C2PA in fixture")
+        for fixture_name in ("synthetic_c2pa_cabx.png", "real_c2pa_png.png"):
+            fixture_path = os.path.join(FIXTURES_DIR, fixture_name)
+            self.assertTrue(os.path.exists(fixture_path), f"Fixture not found: {fixture_path}")
+            self.assertTrue(detect_c2pa_manifest(fixture_path), f"Validator failed to detect C2PA in {fixture_name}")
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            out_path = os.path.join(tmpdir, "output.jpg")
-            self.optimizer.process_file(fixture_path, out_path, self.config)
+            with tempfile.TemporaryDirectory() as tmpdir:
+                out_path = os.path.join(tmpdir, "output.jpg")
+                self.optimizer.process_file(fixture_path, out_path, self.config)
 
-            self.assertTrue(os.path.exists(out_path))
-            self.assertFalse(detect_c2pa_manifest(out_path), "C2PA caBX still detected after Reelsator")
+                self.assertTrue(os.path.exists(out_path))
+                self.assertFalse(detect_c2pa_manifest(out_path), f"C2PA caBX still detected in output of {fixture_name}")
 
-            with Image.open(out_path) as res:
-                self.assertEqual(res.mode, "RGB")
-                self.assertEqual(res.size, (160, 160))
+                with Image.open(out_path) as res:
+                    self.assertEqual(res.mode, "RGB")
+                    self.assertEqual(res.size, (160, 160))
 
     def test_orientation_6_fixture(self):
         """Verify physical 200x100 Orientation=6 fixture normalizes to 100x200."""
@@ -123,18 +125,36 @@ class TestC2PAIntegration(unittest.TestCase):
                 self.assertGreaterEqual(px[2], 240)
 
     def test_display_p3_fixture(self):
-        """Verify Display P3 fixture exports cleanly into standard sRGB."""
-        fixture_path = os.path.join(FIXTURES_DIR, "display_p3.jpg")
-        self.assertTrue(os.path.exists(fixture_path))
+        """Verify authentic Display P3 fixture is identified by ICC tag and converted cleanly into standard sRGB."""
+        import io
+        from PIL import ImageCms
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            out_path = os.path.join(tmpdir, "output.jpg")
-            self.optimizer.process_file(fixture_path, out_path, self.config)
+        for fixture_name in ("display_p3_real.jpg", "display_p3.jpg"):
+            fixture_path = os.path.join(FIXTURES_DIR, fixture_name)
+            self.assertTrue(os.path.exists(fixture_path), f"Fixture not found: {fixture_path}")
 
-            with Image.open(out_path) as res:
-                self.assertEqual(res.mode, "RGB")
-                self.assertEqual(res.size, (120, 120))
+            # Verify authentic Display P3 profile is embedded
+            with Image.open(fixture_path) as src:
+                icc_raw = src.info.get("icc_profile")
+                self.assertIsNotNone(icc_raw, f"Missing ICC profile in {fixture_name}")
+                profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_raw))
+                profile_desc = ImageCms.getProfileDescription(profile)
+                self.assertIn("Display P3", profile_desc)
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                out_path = os.path.join(tmpdir, "output.jpg")
+                self.optimizer.process_file(fixture_path, out_path, self.config)
+
+                with Image.open(out_path) as res:
+                    self.assertEqual(res.mode, "RGB")
+                    self.assertEqual(res.size, (120, 120))
+                    # Color shift assertion: Display-P3 (200, 50, 50) converts to ~ (219, 14, 38) in sRGB
+                    # The Red channel expands (>205) and Green channel contracts (<35), proving genuine LittleCMS conversion
+                    px = res.getpixel((60, 60))
+                    self.assertGreater(px[0], 205, f"Expected transformed red > 205, got {px[0]}")
+                    self.assertLess(px[1], 35, f"Expected transformed green < 35, got {px[1]}")
 
 
 if __name__ == "__main__":
     unittest.main()
+

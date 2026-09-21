@@ -97,7 +97,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Reelsator — Instagram AI Photo Studio & Anti-Detection (Windows 11)")
+        self.setWindowTitle("Reelsator — Instagram AI Photo Preparation Studio (Windows 11)")
         self.resize(1260, 840)
         self.setMinimumSize(1020, 680)
 
@@ -228,7 +228,7 @@ class MainWindow(QMainWindow):
         title = QLabel("REELSATOR", self)
         title.setObjectName("titleLabel")
 
-        subtitle = QLabel("Instagram AI Photo Preparation & Anti-Detection Studio", self)
+        subtitle = QLabel("Instagram AI Photo Preparation Studio", self)
         subtitle.setObjectName("subtitleLabel")
 
         title_box.addWidget(title)
@@ -238,7 +238,7 @@ class MainWindow(QMainWindow):
         hdr.addStretch()
 
         # Badges
-        badge_c2pa = QLabel("C2PA STRIPPER: АКТИВЕН", self)
+        badge_c2pa = QLabel("C2PA / PROVENANCE SANITIZER: АКТИВЕН", self)
         badge_c2pa.setObjectName("badgeOk")
         hdr.addWidget(badge_c2pa)
 

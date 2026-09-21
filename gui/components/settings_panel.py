@@ -62,7 +62,7 @@ class SettingsPanelWidget(QFrame):
         self.btn_preset_ofm.setCheckable(True)
         self.btn_preset_ofm.setChecked(True)
 
-        self.btn_preset_anti = QPushButton("🛡️ Anti-Classifier (Hive/Sightengine)")
+        self.btn_preset_anti = QPushButton("🔬 Текстурирование матрицы (ISP & Bayer)")
         self.btn_preset_anti.setObjectName("pillButton")
         self.btn_preset_anti.setCheckable(True)
 
@@ -70,7 +70,7 @@ class SettingsPanelWidget(QFrame):
         self.btn_preset_natural.setObjectName("pillButton")
         self.btn_preset_natural.setCheckable(True)
 
-        self.btn_preset_bypass = QPushButton("⚡ Aggressive Anti-Detection")
+        self.btn_preset_bypass = QPushButton("⚡ Глубокая обработка (Strong Processing)")
         self.btn_preset_bypass.setObjectName("pillButton")
         self.btn_preset_bypass.setCheckable(True)
 
@@ -129,9 +129,9 @@ class SettingsPanelWidget(QFrame):
         self.combo_camera.currentIndexChanged.connect(self._on_ui_changed)
         layout.addWidget(self.combo_camera)
 
-        # --- Section 4: Optics & Anti-Detection Sliders ---
+        # --- Section 4: Optics & Frequency Sliders ---
 
-        lbl_optics = QLabel("🔬 ТОНКАЯ НАСТРОЙКА РЕАЛИЗМА", self)
+        lbl_optics = QLabel("🔬 ТОНКАЯ НАСТРОЙКА РЕАЛИЗМА И ОПТИКИ", self)
         lbl_optics.setObjectName("sectionHeader")
         layout.addWidget(lbl_optics)
 
@@ -153,9 +153,9 @@ class SettingsPanelWidget(QFrame):
         )
         self.slider_vignette.valueChanged.connect(self._on_ui_changed)
 
-        # Watermark Disruption (Anti-SynthID)
+        # Frequency / Jitter Disruption
         self.slider_disrupt, self.val_disrupt = self._create_slider_row(
-            layout, "Сбивание скрытых меток (Anti-SynthID):", 0, 200, 100, "1.00x"
+            layout, "Частотное возмущение пикселей (Frequency Jitter):", 0, 200, 100, "1.00x"
         )
         self.slider_disrupt.valueChanged.connect(self._on_ui_changed)
 
