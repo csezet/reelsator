@@ -5,7 +5,7 @@ OpenAI/DALL-E latent marks, Digimarc) through non-linear geometric desynchroniza
 and sub-perceptual frequency perturbation.
 """
 
-from typing import Tuple
+from typing import Tuple, Optional
 from PIL import Image
 import numpy as np
 
@@ -15,17 +15,19 @@ def disrupt_watermarks(
     strength: float = 1.0,
     enable_micro_rotation: bool = True,
     enable_pixel_jitter: bool = True,
+    seed: Optional[int] = None,
 ) -> Image.Image:
-    """Disrupts latent invisible watermarks without perceptually degrading image quality.
+    """Applies sub-pixel resampling, micro-rotation, and high-frequency perturbation.
 
     Args:
         image: PIL Image in RGB mode.
         strength: Multiplier (0.5 = subtle, 1.0 = standard OFM, 1.5 = aggressive).
-        enable_micro_rotation: Rotates image by a fractional degree to break 8x8 DCT grid.
-        enable_pixel_jitter: Adds sub-perceptual LSB dithering to scramble stego patterns.
+        enable_micro_rotation: Rotates image by a fractional degree to perturb 8x8 DCT grid.
+        enable_pixel_jitter: Adds sub-perceptual LSB dithering.
+        seed: Optional integer seed for deterministic testing.
 
     Returns:
-        Disrupted PIL Image.
+        Perturbed PIL Image.
     """
     if image.mode != "RGB":
         image = image.convert("RGB")
@@ -63,7 +65,7 @@ def disrupt_watermarks(
     # 4. Sub-perceptual LSB Jitter / Frequency Perturbation
     if enable_pixel_jitter:
         arr = np.asarray(image, dtype=np.int16)
-        rng = np.random.default_rng()
+        rng = np.random.default_rng(seed)
 
         # Gaussian micro-noise (sigma ~ 0.5 - 0.8)
         sigma = 0.6 * strength

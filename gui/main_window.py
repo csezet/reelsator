@@ -21,20 +21,28 @@ from gui.components.settings_panel import SettingsPanelWidget
 from gui.components.batch_list import BatchListWidget
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 class PreviewWorker(QThread):
     """Generates processed preview for the comparison slider in background."""
 
-    preview_ready = Signal(object)  # Emits PIL Image
+    preview_ready = Signal(int, object)  # (generation_id, PIL.Image)
+    preview_failed = Signal(int, str)    # (generation_id, error_message)
 
-    def __init__(self, optimizer: InstaOptimizer, image_path: str, config: ProcessingConfig):
+    def __init__(self, optimizer: InstaOptimizer, image_path: str, config: ProcessingConfig, generation: int):
         super().__init__()
         self.optimizer = optimizer
         self.image_path = image_path
         self.config = config
+        self.generation = generation
 
     def run(self):
         try:
             with Image.open(self.image_path) as src:
+                src.load()
                 # Downscale for instant preview responsiveness if original is huge
                 w, h = src.size
                 if max(w, h) > 1600:
@@ -44,14 +52,14 @@ class PreviewWorker(QThread):
                     src_preview = src.copy()
 
                 processed_img, _ = self.optimizer.process_pil(src_preview, self.config)
-                self.preview_ready.emit(processed_img)
+                self.preview_ready.emit(self.generation, processed_img)
         except Exception as e:
-            # Silent fallback on preview error
-            pass
+            logger.exception("PreviewWorker generation %d failed for %s: %s", self.generation, self.image_path, e)
+            self.preview_failed.emit(self.generation, str(e))
 
 
 class BatchProcessWorker(QThread):
-    """Processes queued images in background thread."""
+    """Processes queued images in background thread with cooperative cancellation."""
 
     item_progress = Signal(int, int, str, bool, str)  # current, total, filename, success, error_msg
     batch_finished = Signal(list)  # list of ProcessItemResult
@@ -62,18 +70,24 @@ class BatchProcessWorker(QThread):
         self.files = files
         self.output_dir = output_dir
         self.config = config
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
 
     def run(self):
-        def on_step(current, total, filename, is_success):
-            self.item_progress.emit(current, total, filename, is_success, "")
+        def on_step(current, total, filename, is_success, error_msg=""):
+            self.item_progress.emit(current, total, filename, is_success, error_msg)
 
         results = self.pipeline.process_batch(
             self.files,
             self.output_dir,
             config=self.config,
             progress_callback=on_step,
+            cancel_check=lambda: self._is_cancelled,
         )
         self.batch_finished.emit(results)
+
 
 
 class MainWindow(QMainWindow):
@@ -92,10 +106,12 @@ class MainWindow(QMainWindow):
 
         self._active_files: List[str] = []
         self._current_preview_file: Optional[str] = None
-        self._preview_worker: Optional[PreviewWorker] = None
+        self._preview_generation: int = 0
+        self._preview_workers: set = set()
         self._batch_worker: Optional[BatchProcessWorker] = None
 
         self._init_ui()
+
 
     def _init_ui(self):
         central_widget = QWidget(self)
@@ -173,10 +189,17 @@ class MainWindow(QMainWindow):
         self.btn_process.clicked.connect(self._start_batch_processing)
         action_layout.addWidget(self.btn_process)
 
+        self.btn_cancel = QPushButton("⛔ Отменить обработку", self)
+        self.btn_cancel.setStyleSheet("background-color: #dc2626; color: white; font-weight: bold; padding: 8px; border-radius: 6px;")
+        self.btn_cancel.setVisible(False)
+        self.btn_cancel.clicked.connect(self._cancel_batch_processing)
+        action_layout.addWidget(self.btn_cancel)
+
         self.btn_open_folder = QPushButton("📂 Открыть папку с готовыми фото", self)
         self.btn_open_folder.setVisible(False)
         self.btn_open_folder.clicked.connect(self._open_output_folder)
         action_layout.addWidget(self.btn_open_folder)
+
 
         right_layout.addWidget(action_card)
 
@@ -283,15 +306,30 @@ class MainWindow(QMainWindow):
         if not self._current_preview_file:
             return
 
-        # Cancel any previous preview thread
-        if self._preview_worker and self._preview_worker.isRunning():
-            self._preview_worker.terminate()
-            self._preview_worker.wait()
-
+        self._preview_generation += 1
+        gen = self._preview_generation
         cfg = self.settings_panel.get_current_config()
-        self._preview_worker = PreviewWorker(self.optimizer, self._current_preview_file, cfg)
-        self._preview_worker.preview_ready.connect(self.comparison_slider.set_after_image)
-        self._preview_worker.start()
+
+        worker = PreviewWorker(self.optimizer, self._current_preview_file, cfg, gen)
+        self._preview_workers.add(worker)
+        worker.preview_ready.connect(self._on_preview_ready)
+        worker.preview_failed.connect(self._on_preview_failed)
+        worker.finished.connect(lambda w=worker: self._cleanup_preview_worker(w))
+        worker.start()
+
+    def _cleanup_preview_worker(self, worker: PreviewWorker):
+        self._preview_workers.discard(worker)
+        worker.deleteLater()
+
+    @Slot(int, object)
+    def _on_preview_ready(self, generation: int, processed_img):
+        if generation == self._preview_generation:
+            self.comparison_slider.set_after_image(processed_img)
+
+    @Slot(int, str)
+    def _on_preview_failed(self, generation: int, error_msg: str):
+        if generation == self._preview_generation:
+            self.lbl_status.setText(f"Ошибка предпросмотра: {error_msg}")
 
     def _start_batch_processing(self):
         if not self._active_files:
@@ -303,6 +341,9 @@ class MainWindow(QMainWindow):
             return
 
         self.btn_process.setEnabled(False)
+        self.btn_cancel.setVisible(True)
+        self.btn_cancel.setEnabled(True)
+        self.btn_open_folder.setVisible(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setMaximum(len(self._active_files))
         self.progress_bar.setValue(0)
@@ -314,25 +355,40 @@ class MainWindow(QMainWindow):
         self._batch_worker.batch_finished.connect(self._on_batch_finished)
         self._batch_worker.start()
 
+    def _cancel_batch_processing(self):
+        if self._batch_worker and self._batch_worker.isRunning():
+            self._batch_worker.cancel()
+            self.lbl_status.setText("Отмена обработки... Ожидание завершения текущего файла.")
+            self.btn_cancel.setEnabled(False)
+
     @Slot(int, int, str, bool, str)
     def _on_batch_item_progress(self, current: int, total: int, filename: str, success: bool, error: str):
         self.progress_bar.setValue(current)
-        self.lbl_status.setText(f"Обработано {current} из {total}: {filename}")
+        if success:
+            self.lbl_status.setText(f"Обработано {current} из {total}: {filename}")
+        else:
+            self.lbl_status.setText(f"Ошибка на {filename}: {error}")
         self.batch_list.update_item_status(current - 1, success, error)
 
     @Slot(list)
     def _on_batch_finished(self, results: List[ProcessItemResult]):
         self.btn_process.setEnabled(True)
+        self.btn_cancel.setVisible(False)
         self.btn_open_folder.setVisible(True)
         success_count = sum(1 for r in results if r.success)
-        self.lbl_status.setText(f"🎉 Готово! Успешно обработано: {success_count} из {len(results)} фото.")
+        failed_count = len(results) - success_count
+        status_text = f"🎉 Готово! Успешно: {success_count} из {len(results)} фото."
+        if failed_count > 0:
+            status_text += f" (Ошибок: {failed_count})"
+        self.lbl_status.setText(status_text)
         QMessageBox.information(
             self,
             "Обработка завершена",
-            f"Успешно обработано {success_count} из {len(results)} файлов!\n"
-            f"Все метаданные очищены, водяные знаки сбиты, внедрен Apple EXIF.\n\n"
+            f"Успешно обработано: {success_count} из {len(results)} файлов.\n"
+            f"Ошибок: {failed_count}\n\n"
             f"Папка сохранения:\n{self.settings_panel.get_output_dir()}",
         )
+
 
     def _open_output_folder(self):
         folder = self.settings_panel.get_output_dir()

@@ -9,9 +9,12 @@ Provides byte-level and container-level stripping of:
 
 import io
 import struct
-from typing import Tuple
-from PIL import Image
+import logging
+from typing import Tuple, Optional
+from PIL import Image, ImageOps, ImageCms
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # JPEG markers
 SOI = b"\xff\xd8"
@@ -36,6 +39,37 @@ DISALLOWED_PNG_CHUNKS = {
     b"XML:",
     b"iCCP",
 }
+
+
+def convert_icc_to_srgb(image: Image.Image) -> Image.Image:
+    """Converts image from its embedded ICC color space (e.g. Display-P3, AdobeRGB) to standard sRGB.
+
+    If no ICC profile is present, returns image unchanged.
+    Safely falls back if the ICC profile is invalid or corrupted.
+    """
+    icc = image.info.get("icc_profile")
+    if not icc:
+        return image
+    try:
+        src_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc))
+        dst_profile = ImageCms.createProfile("sRGB")
+        mode = "RGBA" if "A" in image.getbands() else "RGB"
+        if image.mode not in ("RGB", "RGBA"):
+            image = image.convert(mode)
+        converted = ImageCms.profileToProfile(image, src_profile, dst_profile, outputMode=mode)
+        return converted
+    except Exception as e:
+        logger.warning("Failed to transform ICC profile to sRGB (%s). Falling back.", e)
+        return image
+
+
+def flatten_alpha_channel(image: Image.Image, background: Tuple[int, int, int] = (255, 255, 255)) -> Image.Image:
+    """Composites transparent image over a solid background color (default: white) to prevent black artifacts in JPEG."""
+    if "A" not in image.getbands():
+        return image.convert("RGB") if image.mode != "RGB" else image
+    rgba = image.convert("RGBA")
+    bg = Image.new("RGBA", rgba.size, (*background, 255))
+    return Image.alpha_composite(bg, rgba).convert("RGB")
 
 
 def iter_jpeg_segments(data: bytes):
@@ -156,14 +190,24 @@ def strip_png_metadata(data: bytes) -> bytes:
     return out.getvalue()
 
 
-def clean_image_buffer(image: Image.Image) -> Image.Image:
-    """Creates a completely fresh PIL Image from raw pixel data, discarding all container metadata.
+def clean_image_buffer(image: Image.Image, alpha_background: Tuple[int, int, int] = (255, 255, 255)) -> Image.Image:
+    """Normalizes orientation, color profile, alpha channel, and extracts raw pixel buffer.
 
-    This ensures no residual prompts, C2PA blocks, XMP, or hidden headers persist in memory.
+    Discards all container metadata, C2PA blocks, XMP, IPTC, and generative prompts.
     """
-    if image.mode != "RGB":
-        image = image.convert("RGB")
+    # 1. Normalize physical orientation based on EXIF tag before stripping
+    try:
+        image = ImageOps.exif_transpose(image)
+    except Exception as e:
+        logger.debug("exif_transpose skipped: %s", e)
 
+    # 2. Color management: convert embedded color profile (e.g. Display-P3) to sRGB
+    image = convert_icc_to_srgb(image)
+
+    # 3. Alpha compositing to avoid black background artifacts in JPEG
+    image = flatten_alpha_channel(image, background=alpha_background)
+
+    # 4. Extract raw uncompressed pixel buffer into pure fresh array
     raw_array = np.array(image, dtype=np.uint8, copy=True)
     clean_img = Image.fromarray(raw_array)
     clean_img.info.clear()
@@ -171,10 +215,17 @@ def clean_image_buffer(image: Image.Image) -> Image.Image:
 
 
 def strip_all_metadata(file_bytes: bytes, file_ext: str = ".jpg") -> bytes:
-    """Strips metadata at binary level according to file extension."""
+    """Strips metadata at binary container level using magic bytes inspection with file extension fallback."""
+    if file_bytes.startswith(SOI):
+        return strip_jpeg_metadata(file_bytes)
+    elif file_bytes.startswith(PNG_SIGNATURE):
+        return strip_png_metadata(file_bytes)
+
+    # Fallback to extension if magic bytes did not match
     ext = file_ext.lower().replace(".", "")
     if ext in ("jpg", "jpeg"):
         return strip_jpeg_metadata(file_bytes)
     elif ext == "png":
         return strip_png_metadata(file_bytes)
     return file_bytes
+

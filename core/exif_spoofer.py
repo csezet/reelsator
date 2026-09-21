@@ -6,10 +6,16 @@ parameters (focal length, aperture f/1.78, ISO, shutter speed, MakerNotes, times
 """
 
 from enum import Enum
+import math
 import random
 from datetime import datetime, timedelta
 from typing import Tuple, Dict, Any, Optional
 import piexif
+
+
+class MetadataMode(str, Enum):
+    MINIMAL = "minimal"
+    SYNTHETIC_CAMERA = "synthetic_camera"
 
 
 class CameraPreset(str, Enum):
@@ -78,25 +84,52 @@ class ExifSpoofer:
         device: CameraPreset = CameraPreset.IPHONE_15_PRO,
         capture_time: Optional[datetime] = None,
         randomize_exposure: bool = True,
+        mode: MetadataMode = MetadataMode.SYNTHETIC_CAMERA,
+        random_seed: Optional[int] = None,
     ) -> bytes:
         """Constructs complete, valid camera EXIF byte sequence."""
-        spec = cls.DEVICE_SPECS.get(device, cls.DEVICE_SPECS[CameraPreset.IPHONE_15_PRO])
+        rng = random.Random(random_seed) if random_seed is not None else random
 
         # Generate realistic date
         if capture_time is None:
             # Recent time: within the last 1 to 12 hours
-            delta_minutes = random.randint(15, 720)
+            delta_minutes = rng.randint(15, 720)
             capture_time = datetime.now() - timedelta(minutes=delta_minutes)
 
         date_str = capture_time.strftime("%Y:%m:%d %H:%M:%S")
-        subsec_str = f"{random.randint(10, 999):03d}"
+        subsec_str = f"{rng.randint(10, 999):03d}"
+
+        if mode == MetadataMode.MINIMAL:
+            zeroth_ifd = {
+                piexif.ImageIFD.Software: "Reelsator",
+                piexif.ImageIFD.Orientation: 1,
+                piexif.ImageIFD.XResolution: (72, 1),
+                piexif.ImageIFD.YResolution: (72, 1),
+                piexif.ImageIFD.ResolutionUnit: 2,  # Inches
+                piexif.ImageIFD.DateTime: date_str,
+            }
+            exif_ifd = {
+                piexif.ExifIFD.ExifVersion: b"0232",
+                piexif.ExifIFD.ColorSpace: 1,  # sRGB
+                piexif.ExifIFD.PixelXDimension: width,
+                piexif.ExifIFD.PixelYDimension: height,
+                piexif.ExifIFD.DateTimeOriginal: date_str,
+                piexif.ExifIFD.DateTimeDigitized: date_str,
+            }
+            return piexif.dump({"0th": zeroth_ifd, "Exif": exif_ifd})
+
+        # Synthetic camera capture mode
+        spec = cls.DEVICE_SPECS.get(device, cls.DEVICE_SPECS[CameraPreset.IPHONE_15_PRO])
 
         # Choose exposure profile
-        exp = random.choice(cls.EXPOSURE_PRESETS) if randomize_exposure else cls.EXPOSURE_PRESETS[1]
+        exp = rng.choice(cls.EXPOSURE_PRESETS) if randomize_exposure else cls.EXPOSURE_PRESETS[1]
 
-        # Calculate APEX ShutterSpeedValue from exposure time
-        # Tv = -log2(exposure_time)
-        shutter_speed_apex = round(random.uniform(5.5, 7.2) * 10000)
+        # Calculate APEX ShutterSpeedValue strictly from exposure time
+        # APEX formula: Tv = -log2(seconds) = log2(1 / seconds)
+        num, den = exp["time"]
+        seconds = num / den
+        tv = math.log2(1.0 / seconds)
+        shutter_speed_apex = (int(round(tv * 10000)), 10000)
 
         # 0th IFD (Image information)
         zeroth_ifd = {
@@ -122,7 +155,7 @@ class ExifSpoofer:
             piexif.ExifIFD.DateTimeOriginal: date_str,
             piexif.ExifIFD.DateTimeDigitized: date_str,
             piexif.ExifIFD.ComponentsConfiguration: b"\x01\x02\x03\x00",
-            piexif.ExifIFD.ShutterSpeedValue: (shutter_speed_apex, 10000),
+            piexif.ExifIFD.ShutterSpeedValue: shutter_speed_apex,
             piexif.ExifIFD.ApertureValue: spec["aperture_val"],
             piexif.ExifIFD.BrightnessValue: (int(round(exp["brightness"] * 10000)), 10000),
             piexif.ExifIFD.ExposureBiasValue: (0, 1),
@@ -147,9 +180,6 @@ class ExifSpoofer:
         exif_dict = {
             "0th": zeroth_ifd,
             "Exif": exif_ifd,
-            "GPS": {},
-            "1st": {},
-            "thumbnail": None,
         }
 
         return piexif.dump(exif_dict)

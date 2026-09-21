@@ -21,6 +21,7 @@ class CameraOptics:
         image: Image.Image,
         iso: int = 100,
         grain_strength: float = 1.0,
+        seed: Optional[int] = None,
     ) -> Image.Image:
         """Adds luminance-adaptive digital sensor noise mimicking a smartphone CMOS sensor.
 
@@ -44,7 +45,7 @@ class CameraOptics:
         # ISO 64-100: sigma ~ 1.8-2.4; ISO 400: sigma ~ 4.0
         base_sigma = (1.6 + (iso / 200.0) * 0.8) * grain_strength
 
-        rng = np.random.default_rng()
+        rng = np.random.default_rng(seed)
         # Luminance noise (monochrome component, 80%) + subtle chroma noise (20%)
         mono_noise = rng.normal(0.0, base_sigma * 0.8, (h, w, 1)).astype(np.float32)
         color_noise = rng.normal(0.0, base_sigma * 0.2, (h, w, c)).astype(np.float32)
@@ -221,6 +222,7 @@ class CameraOptics:
         bayer_strength: float = 0.8,
         enable_isp_enhancement: bool = False,
         sharpen_amount: float = 0.45,
+        seed: Optional[int] = None,
     ) -> Image.Image:
         """Executes the complete optical de-AIfication pipeline in sequence."""
         img = image
@@ -235,6 +237,7 @@ class CameraOptics:
         if vignette_strength > 0:
             img = cls.add_vignette(img, vignette_strength)
         if grain_strength > 0:
-            img = cls.add_sensor_grain(img, iso=iso, grain_strength=grain_strength)
+            img = cls.add_sensor_grain(img, iso=iso, grain_strength=grain_strength, seed=seed)
         return img
+
 

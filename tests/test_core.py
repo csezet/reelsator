@@ -201,6 +201,107 @@ class TestReelsatorCore(unittest.TestCase):
             self.assertEqual(len(callback_calls), 3)
             self.assertEqual(callback_calls[-1][0], 3)
 
+    def test_shutter_speed_apex_consistency(self):
+        """Verify that APEX ShutterSpeedValue matches ExposureTime strictly."""
+        import math
+        exif_bytes = ExifSpoofer.generate_exif(100, 100, randomize_exposure=True)
+        exif_dict = piexif.load(exif_bytes)
+        exp = exif_dict["Exif"][piexif.ExifIFD.ExposureTime]
+        tv = exif_dict["Exif"][piexif.ExifIFD.ShutterSpeedValue]
+
+        seconds = exp[0] / exp[1]
+        expected_tv = math.log2(1.0 / seconds)
+        actual_tv = tv[0] / tv[1]
+        self.assertAlmostEqual(actual_tv, expected_tv, places=3)
+
+    def test_metadata_modes(self):
+        """Verify minimal and synthetic metadata modes."""
+        from core.exif_spoofer import MetadataMode
+        # Minimal mode
+        min_bytes = ExifSpoofer.generate_exif(1080, 1350, mode=MetadataMode.MINIMAL)
+        min_dict = piexif.load(min_bytes)
+        self.assertNotIn(piexif.ImageIFD.Make, min_dict["0th"])
+        self.assertEqual(min_dict["0th"][piexif.ImageIFD.Software], b"Reelsator")
+        self.assertEqual(min_dict["Exif"][piexif.ExifIFD.ColorSpace], 1)
+
+        # Synthetic camera mode
+        synth_bytes = ExifSpoofer.generate_exif(1080, 1350, mode=MetadataMode.SYNTHETIC_CAMERA)
+        synth_dict = piexif.load(synth_bytes)
+        self.assertEqual(synth_dict["0th"][piexif.ImageIFD.Make], b"Apple")
+
+    def test_batch_filename_collision_resolution(self):
+        """Verify that files with same basename in different folders do not overwrite each other."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dir_a = os.path.join(tmpdir, "folder_a")
+            dir_b = os.path.join(tmpdir, "folder_b")
+            out_dir = os.path.join(tmpdir, "outputs")
+            os.makedirs(dir_a)
+            os.makedirs(dir_b)
+
+            file_a = os.path.join(dir_a, "photo.png")
+            file_b = os.path.join(dir_b, "photo.png")
+            self.test_img.save(file_a, format="PNG")
+            self.test_img.save(file_b, format="PNG")
+
+            pipeline = BatchPipeline()
+            results = pipeline.process_batch([file_a, file_b], out_dir)
+
+            self.assertEqual(len(results), 2)
+            self.assertTrue(results[0].success)
+            self.assertTrue(results[1].success)
+            self.assertNotEqual(results[0].output_path, results[1].output_path)
+            self.assertTrue(os.path.exists(results[0].output_path))
+            self.assertTrue(os.path.exists(results[1].output_path))
+            self.assertTrue(results[1].output_path.endswith("_insta_2.jpg"))
+
+    def test_alpha_channel_flattening(self):
+        """Verify that transparent PNGs are composited over solid white, avoiding black backgrounds."""
+        # Create transparent RGBA image with pure transparent section
+        rgba_arr = np.zeros((100, 100, 4), dtype=np.uint8)
+        rgba_arr[:, :, 3] = 0  # 100% transparent
+        rgba_img = Image.fromarray(rgba_arr)
+
+        clean_rgb = clean_image_buffer(rgba_img)
+        self.assertEqual(clean_rgb.mode, "RGB")
+        # All pixels should be white (255, 255, 255), not black
+        clean_arr = np.asarray(clean_rgb)
+        self.assertEqual(clean_arr[50, 50, 0], 255)
+        self.assertEqual(clean_arr[50, 50, 1], 255)
+        self.assertEqual(clean_arr[50, 50, 2], 255)
+
+    def test_exif_orientation_normalization(self):
+        """Verify that images with EXIF Orientation=6 (rotated 90 CW) are normalized."""
+        # Create 200x100 rectangular image
+        rect_img = Image.new("RGB", (200, 100), color=(100, 150, 200))
+        exif_dict = {"0th": {piexif.ImageIFD.Orientation: 6}}
+        exif_bytes = piexif.dump(exif_dict)
+
+        buf = io.BytesIO()
+        rect_img.save(buf, format="JPEG", exif=exif_bytes)
+        buf.seek(0)
+
+        with Image.open(buf) as loaded:
+            normalized = clean_image_buffer(loaded)
+            # Orientation 6 rotates by 90 degrees CW (or 270 CCW), swapping width & height
+            self.assertEqual(normalized.size, (100, 200))
+
+    def test_deterministic_random_seed(self):
+        """Verify that identical random_seed yields deterministic output."""
+        cfg_seed1 = ProcessingConfig.ofm_master()
+        cfg_seed1.random_seed = 42
+
+        cfg_seed2 = ProcessingConfig.ofm_master()
+        cfg_seed2.random_seed = 42
+
+        optimizer = InstaOptimizer()
+        img1, _ = optimizer.process_pil(self.test_img, cfg_seed1)
+        img2, _ = optimizer.process_pil(self.test_img, cfg_seed2)
+
+        arr1 = np.asarray(img1)
+        arr2 = np.asarray(img2)
+        np.testing.assert_array_equal(arr1, arr2)
+
 
 if __name__ == "__main__":
     unittest.main()
+

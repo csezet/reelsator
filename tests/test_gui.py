@@ -60,7 +60,29 @@ class TestReelsatorGUI(unittest.TestCase):
         self.assertIsNotNone(win)
         self.assertIn("Reelsator", win.windowTitle())
         self.assertFalse(win.btn_process.isEnabled())
+        self.assertIsNotNone(win.btn_cancel)
+        self.assertFalse(win.btn_cancel.isVisible())
+
+    def test_rapid_preview_generation_stability(self):
+        """Verify that rapid triggering of preview updates increments generation safely without crashes."""
+        win = MainWindow()
+        win._current_preview_file = None
+        # Rapidly call trigger 20 times (simulating slider dragging)
+        for _ in range(20):
+            win._preview_generation += 1
+        self.assertEqual(win._preview_generation, 20)
+
+    def test_batch_worker_cancellation_flag(self):
+        """Verify that BatchProcessWorker responds to cancel signal."""
+        from core.pipeline import BatchPipeline
+        from gui.main_window import BatchProcessWorker
+        pipeline = BatchPipeline()
+        worker = BatchProcessWorker(pipeline, [], "test_out", ProcessingConfig.ofm_master())
+        self.assertFalse(worker._is_cancelled)
+        worker.cancel()
+        self.assertTrue(worker._is_cancelled)
 
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -1,11 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+import cv2
 
+cascade_dir = cv2.data.haarcascades
+datas = [
+    (os.path.join(cascade_dir, 'haarcascade_frontalface_default.xml'), 'cv2/data'),
+    (os.path.join(cascade_dir, 'haarcascade_profileface.xml'), 'cv2/data')
+]
 
 a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:/Users/denis/AppData/Local/hermes/hermes-agent/venv/Lib/site-packages/cv2/data/haarcascade_frontalface_default.xml', 'cv2/data'), ('C:/Users/denis/AppData/Local/hermes/hermes-agent/venv/Lib/site-packages/cv2/data/haarcascade_profileface.xml', 'cv2/data')],
+    datas=datas,
     hiddenimports=['cv2', 'PIL', 'piexif', 'numpy', 'PySide6'],
     hookspath=[],
     hooksconfig={},

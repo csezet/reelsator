@@ -16,7 +16,7 @@ from .c2pa_killer import clean_image_buffer
 from .watermark_disruptor import disrupt_watermarks
 from .camera_optics import CameraOptics
 from .smart_cropper import SmartCropper, AspectRatio
-from .exif_spoofer import ExifSpoofer, CameraPreset
+from .exif_spoofer import ExifSpoofer, CameraPreset, MetadataMode
 
 TupleImageResult = Tuple[Image.Image, bytes]
 
@@ -25,6 +25,7 @@ TupleImageResult = Tuple[Image.Image, bytes]
 class ProcessingConfig:
     aspect_ratio: AspectRatio = AspectRatio.FEED_4_5
     camera_preset: CameraPreset = CameraPreset.IPHONE_15_PRO
+    metadata_mode: MetadataMode = MetadataMode.SYNTHETIC_CAMERA
     disrupt_strength: float = 1.0
     grain_strength: float = 1.0
     aberration_px: float = 0.65
@@ -36,6 +37,9 @@ class ProcessingConfig:
     bayer_strength: float = 0.8
     enable_isp_enhancement: bool = False
     sharpen_amount: float = 0.45
+    alpha_background: Tuple[int, int, int] = (255, 255, 255)
+    random_seed: Optional[int] = None
+    overwrite_existing: bool = False
 
     @classmethod
     def ofm_master(cls) -> "ProcessingConfig":
@@ -136,16 +140,17 @@ class InstaOptimizer:
         config: ProcessingConfig,
     ) -> TupleImageResult:
         """Processes a PIL Image through the complete pipeline and returns (clean_image, exif_bytes)."""
-        # Step 1: Strip all metadata containers and prompts by extracting pure raw pixels
-        clean_img = clean_image_buffer(image)
+        # Step 1: Strip all metadata containers, normalize orientation, color profile, and alpha
+        clean_img = clean_image_buffer(image, alpha_background=config.alpha_background)
 
-        # Step 2: Disrupt latent frequency watermarks (SynthID / DALL-E)
+        # Step 2: Perturb latent frequency watermarks / grid artifacts
         if config.disrupt_strength > 0:
             clean_img = disrupt_watermarks(
                 clean_img,
                 strength=config.disrupt_strength,
                 enable_micro_rotation=True,
                 enable_pixel_jitter=True,
+                seed=config.random_seed,
             )
 
         # Step 3: Smart Face-Centered Cropping to Instagram Aspect Ratio
@@ -159,7 +164,6 @@ class InstaOptimizer:
                 use_smart_face_centering=config.use_smart_face_centering,
             )
 
-
         # Step 4: Apply Physical Camera Optics & Film Emulation
         final_img = CameraOptics.apply_all(
             framed_img,
@@ -172,16 +176,19 @@ class InstaOptimizer:
             bayer_strength=config.bayer_strength,
             enable_isp_enhancement=config.enable_isp_enhancement,
             sharpen_amount=config.sharpen_amount,
+            seed=config.random_seed,
         )
 
-
-        # Step 5: Synthesize Authentic Apple iPhone EXIF Profile
+        # Step 5: Synthesize Camera EXIF Profile
         w, h = final_img.size
+        mode_val = MetadataMode(config.metadata_mode) if isinstance(config.metadata_mode, str) else config.metadata_mode
         exif_bytes = ExifSpoofer.generate_exif(
             width=w,
             height=h,
             device=config.camera_preset,
             randomize_exposure=True,
+            mode=mode_val,
+            random_seed=config.random_seed,
         )
 
         return final_img, exif_bytes
@@ -192,26 +199,43 @@ class InstaOptimizer:
         output_path: str,
         config: Optional[ProcessingConfig] = None,
     ) -> str:
-        """Processes an image file from disk and saves the optimized JPEG."""
+        """Processes an image file from disk and saves the optimized JPEG atomically."""
         if config is None:
             config = ProcessingConfig.ofm_master()
 
         with Image.open(input_path) as src:
+            src.load()
             processed_img, exif_bytes = self.process_pil(src, config)
 
         # Ensure target directory exists
-        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        target_dir = os.path.dirname(os.path.abspath(output_path))
+        os.makedirs(target_dir, exist_ok=True)
 
-        # Save as optimized JPEG with injected iPhone EXIF
-        # Subsampling 4:2:0 ('2') is standard for mobile camera JPEGs
-        processed_img.save(
-            output_path,
-            format="JPEG",
-            quality=config.jpeg_quality,
-            subsampling=2,
-            optimize=True,
-            exif=exif_bytes,
-        )
+        # Atomic write: save to a temporary file first, then replace
+        base_name = os.path.basename(output_path)
+        tmp_name = f".tmp_{os.getpid()}_{base_name}"
+        tmp_path = os.path.join(target_dir, tmp_name)
+
+        try:
+            processed_img.save(
+                tmp_path,
+                format="JPEG",
+                quality=config.jpeg_quality,
+                subsampling=2,
+                optimize=True,
+                exif=exif_bytes,
+            )
+            if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
+                raise IOError(f"Failed to generate output JPEG at {tmp_path}")
+
+            os.replace(tmp_path, output_path)
+        finally:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
         return output_path
+
 

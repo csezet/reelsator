@@ -3,32 +3,18 @@
 import os
 import sys
 import subprocess
-import cv2
+
 
 def build():
-    print("Building Reelsator standalone executable for Windows 11...")
+    print("Building Reelsator standalone executable for Windows 11 using Reelsator.spec...")
 
-    cascade_dir = cv2.data.haarcascades
-    face_xml = os.path.join(cascade_dir, "haarcascade_frontalface_default.xml")
-    profile_xml = os.path.join(cascade_dir, "haarcascade_profileface.xml")
-
-    # PyInstaller arguments
+    # Build directly from the portable Reelsator.spec
     cmd = [
         sys.executable,
         "-m", "PyInstaller",
-        "--name=Reelsator",
-        "--noconsole",
-        "--onedir",
         "--clean",
         "--noconfirm",
-        f"--add-data={face_xml};cv2/data",
-        f"--add-data={profile_xml};cv2/data",
-        "--hidden-import=cv2",
-        "--hidden-import=PIL",
-        "--hidden-import=piexif",
-        "--hidden-import=numpy",
-        "--hidden-import=PySide6",
-        "app.py"
+        "Reelsator.spec",
     ]
 
     print("Running command:", " ".join(cmd))
@@ -38,6 +24,8 @@ def build():
         print("Executable located at: dist/Reelsator/Reelsator.exe")
     else:
         print(f"\nBuild failed with exit code {res.returncode}")
+        sys.exit(res.returncode)
+
 
 if __name__ == "__main__":
     build()
