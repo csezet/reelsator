@@ -32,6 +32,10 @@ class ProcessingConfig:
     enable_photonic_grade: bool = True
     use_smart_face_centering: bool = True
     jpeg_quality: int = 90
+    enable_bayer_matrix: bool = False
+    bayer_strength: float = 0.8
+    enable_isp_enhancement: bool = False
+    sharpen_amount: float = 0.45
 
     @classmethod
     def ofm_master(cls) -> "ProcessingConfig":
@@ -46,6 +50,30 @@ class ProcessingConfig:
             enable_photonic_grade=True,
             use_smart_face_centering=True,
             jpeg_quality=90,
+            enable_bayer_matrix=False,
+            enable_isp_enhancement=False,
+        )
+
+    @classmethod
+    def anti_classifier(cls) -> "ProcessingConfig":
+        """Maximum protection against vision classifiers (Hive Moderation, Sightengine, Meta Vision).
+
+        Injects physical camera CMOS Bayer matrix pattern and ISP local contrast/unsharp masking.
+        """
+        return cls(
+            aspect_ratio=AspectRatio.FEED_4_5,
+            camera_preset=CameraPreset.IPHONE_15_PRO,
+            disrupt_strength=1.2,
+            grain_strength=1.4,
+            aberration_px=0.75,
+            vignette_strength=0.03,
+            enable_photonic_grade=True,
+            use_smart_face_centering=True,
+            jpeg_quality=89,
+            enable_bayer_matrix=True,
+            bayer_strength=1.0,
+            enable_isp_enhancement=True,
+            sharpen_amount=0.55,
         )
 
     @classmethod
@@ -76,6 +104,8 @@ class ProcessingConfig:
             enable_photonic_grade=True,
             use_smart_face_centering=True,
             jpeg_quality=89,
+            enable_bayer_matrix=True,
+            bayer_strength=0.7,
         )
 
     @classmethod
@@ -133,7 +163,12 @@ class InstaOptimizer:
             aberration_px=config.aberration_px,
             vignette_strength=config.vignette_strength,
             enable_photonic=config.enable_photonic_grade,
+            enable_bayer_matrix=config.enable_bayer_matrix,
+            bayer_strength=config.bayer_strength,
+            enable_isp_enhancement=config.enable_isp_enhancement,
+            sharpen_amount=config.sharpen_amount,
         )
+
 
         # Step 5: Synthesize Authentic Apple iPhone EXIF Profile
         w, h = final_img.size

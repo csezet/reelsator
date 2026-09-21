@@ -101,6 +101,16 @@ class TestReelsatorCore(unittest.TestCase):
         vig_corner = np.mean(np.asarray(vignetted)[0, 0, :])
         self.assertLess(vig_corner, orig_corner)
 
+        # 4. Bayer Matrix Simulation
+        bayer = CameraOptics.apply_bayer_matrix(self.test_img, strength=1.0)
+        self.assertEqual(bayer.size, self.test_img.size)
+        self.assertNotEqual(np.asarray(self.test_img)[0, 0, 1], np.asarray(bayer)[0, 0, 1])
+
+        # 5. ISP Local Contrast Enhancement
+        isp = CameraOptics.apply_isp_local_contrast(self.test_img, sharpen_amount=0.5, contrast_amount=0.1)
+        self.assertEqual(isp.size, self.test_img.size)
+
+
     def test_smart_cropper_dimensions(self):
         """Verify target cropping to 1080x1350 (4:5) and other Instagram formats."""
         cropper = SmartCropper()

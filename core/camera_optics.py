@@ -141,6 +141,72 @@ class CameraOptics:
 
         return Image.fromarray(arr.astype(np.uint8))
 
+    @staticmethod
+    def apply_bayer_matrix(
+        image: Image.Image,
+        strength: float = 1.0,
+    ) -> Image.Image:
+        """Emulates the physical Bayer Color Filter Array (RGGB) found on real camera CMOS sensors.
+
+        Injects alternating-row sub-perceptual channel micro-offsets that destroy continuous
+        diffusion gradients without visible artifacting to the human eye.
+        """
+        if strength <= 0:
+            return image
+
+        arr = np.array(image, dtype=np.int16)
+        # Micro-offset (typically 6-12 levels depending on strength)
+        offset = int(round(10.0 * strength))
+
+        # Alternating row Green / Blue micro-displacement
+        arr[0::2, :, 1] = np.clip(arr[0::2, :, 1] - offset, 0, 255)
+        arr[0::2, :, 2] = np.clip(arr[0::2, :, 2] + offset, 0, 255)
+
+        # Alternating column Red / Green micro-displacement
+        arr[:, 0::2, 0] = np.clip(arr[:, 0::2, 0] + (offset // 2), 0, 255)
+        arr[:, 0::2, 1] = np.clip(arr[:, 0::2, 1] - (offset // 2), 0, 255)
+
+        return Image.fromarray(arr.astype(np.uint8))
+
+    @staticmethod
+    def apply_isp_local_contrast(
+        image: Image.Image,
+        sharpen_amount: float = 0.45,
+        contrast_amount: float = 0.12,
+    ) -> Image.Image:
+        """Simulates camera Image Signal Processor (ISP) unsharp masking and local contrast expansion.
+
+        Breaks synthetic AI airbrushed skin smoothness by introducing natural micro-frequency edges.
+        """
+        if sharpen_amount <= 0 and contrast_amount <= 0:
+            return image
+
+        arr = np.array(image, dtype=np.float32)
+        h, w, c = arr.shape
+
+        # Gaussian blur for high-pass frequency extraction
+        kernel_size = max(3, (int(round(min(w, h) / 300)) * 2) + 1)
+        blurred = cv2.GaussianBlur(arr, (kernel_size, kernel_size), sigmaX=1.5)
+
+        # High-pass detail boost (unsharp mask)
+        detail = arr - blurred
+        sharpened = arr + detail * sharpen_amount
+
+        # Local luminance contrast expansion
+        lum = 0.2126 * arr[:, :, 0] + 0.7152 * arr[:, :, 1] + 0.0722 * arr[:, :, 2]
+        local_mean = cv2.blur(lum, (25, 25))
+
+        lum_diff = lum - local_mean
+        adjusted_lum = local_mean + lum_diff * (1.0 + contrast_amount)
+
+        # Apply luminance scaling to RGB
+        scale = np.where(lum > 1.0, adjusted_lum / np.maximum(lum, 1e-5), 1.0)
+        scale = np.repeat(scale[:, :, np.newaxis], c, axis=2)
+
+        final_arr = np.clip(sharpened * scale, 0.0, 255.0).astype(np.uint8)
+        return Image.fromarray(final_arr)
+
+
 
     @classmethod
     def apply_all(
@@ -151,11 +217,19 @@ class CameraOptics:
         aberration_px: float = 0.65,
         vignette_strength: float = 0.025,
         enable_photonic: bool = True,
+        enable_bayer_matrix: bool = False,
+        bayer_strength: float = 0.8,
+        enable_isp_enhancement: bool = False,
+        sharpen_amount: float = 0.45,
     ) -> Image.Image:
         """Executes the complete optical de-AIfication pipeline in sequence."""
         img = image
         if enable_photonic:
             img = cls.apply_photonic_grade(img)
+        if enable_bayer_matrix and bayer_strength > 0:
+            img = cls.apply_bayer_matrix(img, strength=bayer_strength)
+        if enable_isp_enhancement and sharpen_amount > 0:
+            img = cls.apply_isp_local_contrast(img, sharpen_amount=sharpen_amount)
         if aberration_px > 0:
             img = cls.add_chromatic_aberration(img, aberration_px)
         if vignette_strength > 0:
@@ -163,3 +237,4 @@ class CameraOptics:
         if grain_strength > 0:
             img = cls.add_sensor_grain(img, iso=iso, grain_strength=grain_strength)
         return img
+

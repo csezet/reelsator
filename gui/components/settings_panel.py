@@ -60,11 +60,15 @@ class SettingsPanelWidget(QFrame):
         self.btn_preset_ofm.setCheckable(True)
         self.btn_preset_ofm.setChecked(True)
 
+        self.btn_preset_anti = QPushButton("🛡️ Anti-Classifier (Hive/Sightengine)")
+        self.btn_preset_anti.setObjectName("pillButton")
+        self.btn_preset_anti.setCheckable(True)
+
         self.btn_preset_natural = QPushButton("📱 iPhone Natural (Селфи)")
         self.btn_preset_natural.setObjectName("pillButton")
         self.btn_preset_natural.setCheckable(True)
 
-        self.btn_preset_bypass = QPushButton("🛡️ Aggressive Anti-Detection")
+        self.btn_preset_bypass = QPushButton("⚡ Aggressive Anti-Detection")
         self.btn_preset_bypass.setObjectName("pillButton")
         self.btn_preset_bypass.setCheckable(True)
 
@@ -74,14 +78,16 @@ class SettingsPanelWidget(QFrame):
 
         self.preset_group = QButtonGroup(self)
         self.preset_group.setExclusive(True)
-        for b in [self.btn_preset_ofm, self.btn_preset_natural, self.btn_preset_bypass, self.btn_preset_story]:
+        for b in [self.btn_preset_ofm, self.btn_preset_anti, self.btn_preset_natural, self.btn_preset_bypass, self.btn_preset_story]:
             self.preset_group.addButton(b)
             preset_layout.addWidget(b)
 
         self.btn_preset_ofm.clicked.connect(lambda: self._select_preset("ofm"))
+        self.btn_preset_anti.clicked.connect(lambda: self._select_preset("anti"))
         self.btn_preset_natural.clicked.connect(lambda: self._select_preset("natural"))
         self.btn_preset_bypass.clicked.connect(lambda: self._select_preset("bypass"))
         self.btn_preset_story.clicked.connect(lambda: self._select_preset("story"))
+
 
         layout.addLayout(preset_layout)
 
@@ -150,6 +156,18 @@ class SettingsPanelWidget(QFrame):
         self.chk_photonic.toggled.connect(self._on_ui_changed)
         layout.addWidget(self.chk_photonic)
 
+        # Bayer Matrix Sensor Grid
+        self.chk_bayer = QCheckBox("Сетка матрицы Байера (Bayer CFA)", self)
+        self.chk_bayer.setChecked(False)
+        self.chk_bayer.toggled.connect(self._on_ui_changed)
+        layout.addWidget(self.chk_bayer)
+
+        # ISP Local Contrast
+        self.chk_isp = QCheckBox("Адаптивный контраст ISP (разрушение гладкости ИИ)", self)
+        self.chk_isp.setChecked(False)
+        self.chk_isp.toggled.connect(self._on_ui_changed)
+        layout.addWidget(self.chk_isp)
+
         # --- Section 5: Output Folder ---
         lbl_out = QLabel("📂 ПАПКА СОХРАНЕНИЯ", self)
         lbl_out.setObjectName("sectionHeader")
@@ -203,6 +221,8 @@ class SettingsPanelWidget(QFrame):
     def _select_preset(self, preset_name: str):
         if preset_name == "ofm":
             cfg = ProcessingConfig.ofm_master()
+        elif preset_name == "anti":
+            cfg = ProcessingConfig.anti_classifier()
         elif preset_name == "natural":
             cfg = ProcessingConfig.iphone_natural()
         elif preset_name == "bypass":
@@ -231,6 +251,8 @@ class SettingsPanelWidget(QFrame):
 
         self.chk_face_detect.setChecked(cfg.use_smart_face_centering)
         self.chk_photonic.setChecked(cfg.enable_photonic_grade)
+        self.chk_bayer.setChecked(cfg.enable_bayer_matrix)
+        self.chk_isp.setChecked(cfg.enable_isp_enhancement)
 
         # Sliders
         self.slider_grain.setValue(int(round(cfg.grain_strength * 100)))
@@ -273,9 +295,14 @@ class SettingsPanelWidget(QFrame):
             enable_photonic_grade=self.chk_photonic.isChecked(),
             use_smart_face_centering=self.chk_face_detect.isChecked(),
             jpeg_quality=90,
+            enable_bayer_matrix=self.chk_bayer.isChecked(),
+            bayer_strength=1.0 if self.chk_bayer.isChecked() else 0.0,
+            enable_isp_enhancement=self.chk_isp.isChecked(),
+            sharpen_amount=0.55 if self.chk_isp.isChecked() else 0.0,
         )
         self._current_config = cfg
         self.config_changed.emit(cfg)
+
 
     def get_current_config(self) -> ProcessingConfig:
         return self._current_config
