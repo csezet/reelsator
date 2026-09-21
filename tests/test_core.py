@@ -2,6 +2,7 @@
 
 import os
 import io
+import struct
 import tempfile
 import unittest
 from PIL import Image, PngImagePlugin
@@ -48,15 +49,22 @@ class TestReelsatorCore(unittest.TestCase):
         # Check prompt exists in raw bytes
         self.assertIn(b"photorealistic", png_bytes_with_prompt)
 
+        # Inject fake caBX C2PA chunk into the bytes
+        cabx_chunk = struct.pack(">I", 8) + b"caBX" + b"c2pajumb" + struct.pack(">I", 0)
+        png_with_cabx = png_bytes_with_prompt[:33] + cabx_chunk + png_bytes_with_prompt[33:]
+        self.assertIn(b"caBX", png_with_cabx)
+
         # Clean via strip_png_metadata
-        cleaned_png_bytes = strip_png_metadata(png_bytes_with_prompt)
+        cleaned_png_bytes = strip_png_metadata(png_with_cabx)
         self.assertNotIn(b"photorealistic", cleaned_png_bytes)
         self.assertNotIn(b"parameters", cleaned_png_bytes)
+        self.assertNotIn(b"caBX", cleaned_png_bytes)
 
         # Clean via clean_image_buffer
         with Image.open(io.BytesIO(png_bytes_with_prompt)) as img_loaded:
             clean_pil = clean_image_buffer(img_loaded)
             self.assertEqual(len(clean_pil.info), 0)
+
 
     def test_watermark_disruptor(self):
         """Verify sub-pixel geometric shifting and LSB perturbation."""

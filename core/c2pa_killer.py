@@ -24,6 +24,9 @@ COM = 0xFE
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 DISALLOWED_PNG_CHUNKS = {
     b"c2pa",
+    b"caBX",  # C2PA Manifest Store box in PNG
+    b"caFS",  # C2PA Fragment Store
+    b"caMA",  # C2PA Manifest Assertion
     b"tEXt",
     b"zTXt",
     b"iTXt",
