@@ -75,10 +75,22 @@ cd reelsator
 pip install -r requirements.txt
 ```
 
+### Запуск настольного приложения:
+```bash
+python app.py
+```
+
 ### Запуск тестов:
 ```bash
 python -m unittest discover tests
 ```
+
+### Сборка в автономный .exe для Windows 11:
+```bash
+python build_exe.py
+```
+Собранная программа будет находиться в папке `dist/Reelsator/Reelsator.exe` и запускается в один клик без Python.
+
 
 ---
 
