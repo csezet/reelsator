@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D4.svg)](https://microsoft.com/windows)
 [![Framework](https://img.shields.io/badge/GUI-PySide6%20(Qt%206)-41CD52.svg)](https://qt.io/)
-[![Tests](https://img.shields.io/badge/Tests-34%20Passed-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-37%20Passed-success.svg)]()
 [![CI](https://github.com/csezet/reelsator/actions/workflows/test.yml/badge.svg)](https://github.com/csezet/reelsator/actions/workflows/test.yml)
 [![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 
