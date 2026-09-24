@@ -42,6 +42,7 @@ class SettingsPanelWidget(QFrame):
 
         self._current_config = ProcessingConfig.ofm_master()
         self._is_updating_ui = False
+        self._user_customized_output_dir = False
         self._output_dir = os.path.abspath("./_ready_for_instagram")
 
         self._init_ui()
@@ -164,7 +165,8 @@ class SettingsPanelWidget(QFrame):
         layout.addWidget(hdr_camera)
 
         self.combo_metadata = NoWheelComboBox(self)
-        self.combo_metadata.addItem("Minimal (стандартный sRGB / без фейков)", MetadataMode.MINIMAL)
+        self.combo_metadata.addItem("Без EXIF (полная очистка)", MetadataMode.NO_EXIF)
+        self.combo_metadata.addItem("Minimal (sRGB / без фейковых дат)", MetadataMode.MINIMAL)
         self.combo_metadata.addItem("Synthetic Camera (Apple iPhone / Sony)", MetadataMode.SYNTHETIC_CAMERA)
         self.combo_metadata.currentIndexChanged.connect(self._on_ui_changed)
         layout.addWidget(self.combo_metadata)
@@ -229,6 +231,7 @@ class SettingsPanelWidget(QFrame):
         out_row = QHBoxLayout()
         self.txt_output_dir = QLineEdit(self._output_dir, self)
         self.txt_output_dir.setStyleSheet("background-color: #242632; border: 1px solid #323544; border-radius: 6px; padding: 6px; color: #f3f4f6;")
+        self.txt_output_dir.textEdited.connect(self._on_output_dir_edited)
         btn_browse = QPushButton(" Обзор...", self)
         btn_browse.setIcon(get_app_icon("folder-open", "muted", 14))
         btn_browse.clicked.connect(self._choose_output_dir)
@@ -260,18 +263,28 @@ class SettingsPanelWidget(QFrame):
         parent_layout.addWidget(slider)
         return slider, val_lbl
 
+    def _on_output_dir_edited(self, text: str):
+        self._user_customized_output_dir = True
+        self._output_dir = text.strip()
+
     def _choose_output_dir(self):
         folder = QFileDialog.getExistingDirectory(self, "Выберите папку для сохранения готовых фото", self._output_dir)
         if folder:
+            self._user_customized_output_dir = True
             self._output_dir = folder
             self.txt_output_dir.setText(folder)
 
     def get_output_dir(self) -> str:
         return self.txt_output_dir.text().strip()
 
-    def set_output_dir(self, dir_path: str):
+    def set_output_dir(self, dir_path: str, force: bool = False):
+        if not force and self._user_customized_output_dir:
+            return
         self._output_dir = dir_path
         self.txt_output_dir.setText(dir_path)
+
+    def has_user_customized_output_dir(self) -> bool:
+        return self._user_customized_output_dir
 
     def _select_preset(self, preset_name: str):
         if preset_name == "ofm":

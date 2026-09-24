@@ -53,3 +53,9 @@ jobs:
             exit 1
           }
           Write-Host "Build verification passed! Artifact size: $([math]::Round($size/1MB, 2)) MB"
+          Write-Host "Executing binary smoke test..."
+          & "dist/Reelsator/Reelsator.exe" --smoke-test
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Binary smoke test failed with exit code $LASTEXITCODE"
+            exit 1
+          }

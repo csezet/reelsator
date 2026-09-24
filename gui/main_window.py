@@ -15,6 +15,7 @@ from PySide6.QtGui import QDesktopServices, QIcon
 
 from core.insta_optimizer import InstaOptimizer, ProcessingConfig, validate_image_dimensions
 from core.pipeline import BatchPipeline, ProcessItemResult
+from core.c2pa_killer import clean_image_buffer
 from gui.theme import DARK_THEME_QSS, apply_windows_dark_titlebar
 from gui.icon_utils import get_app_icon
 from gui.components.drop_zone import DropZoneWidget
@@ -31,8 +32,8 @@ logger = logging.getLogger(__name__)
 class PreviewWorker(QThread):
     """Generates processed preview for the comparison slider in background."""
 
-    preview_ready = Signal(int, object)  # (generation_id, PIL.Image)
-    preview_failed = Signal(int, str)    # (generation_id, error_message)
+    preview_ready = Signal(int, str, object)  # (generation_id, image_path, PIL.Image)
+    preview_failed = Signal(int, str, str)    # (generation_id, image_path, error_message)
 
     def __init__(self, optimizer: InstaOptimizer, image_path: str, config: ProcessingConfig, generation: int):
         super().__init__()
@@ -55,10 +56,10 @@ class PreviewWorker(QThread):
                     src_preview = src.copy()
 
                 processed_img, _ = self.optimizer.process_pil(src_preview, self.config)
-                self.preview_ready.emit(self.generation, processed_img)
+                self.preview_ready.emit(self.generation, self.image_path, processed_img)
         except Exception as e:
             logger.exception("PreviewWorker generation %d failed for %s: %s", self.generation, self.image_path, e)
-            self.preview_failed.emit(self.generation, str(e))
+            self.preview_failed.emit(self.generation, self.image_path, str(e))
 
 
 class BatchProcessWorker(QThread):
@@ -200,7 +201,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setVisible(False)
         action_layout.addWidget(self.progress_bar)
 
-        self.lbl_status = QLabel("Перетащите фото из ChatGPT для начала", self)
+        self.lbl_status = QLabel("Перетащите фото для начала", self)
         self.lbl_status.setStyleSheet("font-size: 12px; color: #9ca3af; background: transparent; border: none;")
         action_layout.addWidget(self.lbl_status)
 
@@ -283,10 +284,11 @@ class MainWindow(QMainWindow):
 
         self.batch_list.set_files(self._active_files)
 
-        # Set default output dir in the folder of first image
-        first_dir = os.path.dirname(self._active_files[0])
-        default_out = os.path.join(first_dir, "_ready_for_instagram")
-        self.settings_panel.set_output_dir(default_out)
+        # Set default output dir in the folder of first image only if user has not customized it
+        if not self.settings_panel.has_user_customized_output_dir():
+            first_dir = os.path.dirname(self._active_files[0])
+            default_out = os.path.join(first_dir, "_ready_for_instagram")
+            self.settings_panel.set_output_dir(default_out)
 
         # Show comparison view
         self.drop_zone.setVisible(False)
@@ -303,6 +305,8 @@ class MainWindow(QMainWindow):
         self._load_preview(file_path)
 
     def _on_clear_queue(self):
+        if self._batch_worker and self._batch_worker.isRunning():
+            return
         self._active_files.clear()
         self._current_preview_file = None
         self.comparison_slider.setVisible(False)
@@ -310,7 +314,7 @@ class MainWindow(QMainWindow):
         self.btn_process.setEnabled(False)
         self.btn_open_folder.setVisible(False)
         self.progress_bar.setVisible(False)
-        self.lbl_status.setText("Перетащите фото из ChatGPT для начала")
+        self.lbl_status.setText("Перетащите фото для начала")
 
     def _load_preview(self, file_path: str):
         if not os.path.exists(file_path):
@@ -320,7 +324,10 @@ class MainWindow(QMainWindow):
         try:
             with Image.open(file_path) as img:
                 validate_image_dimensions(img)
-                self.comparison_slider.set_images(img.copy())
+                # Normalize physical orientation, color profile, and alpha channel
+                # so the Before image matches the pipeline's internal input representation
+                normalized_img = clean_image_buffer(img)
+                self.comparison_slider.set_images(normalized_img)
             self._trigger_preview_update()
         except ValueError as e:
             logger.warning("Attempted to load oversized image for preview: %s", e)
@@ -370,14 +377,14 @@ class MainWindow(QMainWindow):
             self._pending_preview = False
             self._run_preview_worker()
 
-    @Slot(int, object)
-    def _on_preview_ready(self, generation: int, processed_img):
-        if generation == self._preview_generation:
+    @Slot(int, str, object)
+    def _on_preview_ready(self, generation: int, image_path: str, processed_img):
+        if generation == self._preview_generation and image_path == self._current_preview_file:
             self.comparison_slider.set_after_image(processed_img)
 
-    @Slot(int, str)
-    def _on_preview_failed(self, generation: int, error_msg: str):
-        if generation == self._preview_generation:
+    @Slot(int, str, str)
+    def _on_preview_failed(self, generation: int, image_path: str, error_msg: str):
+        if generation == self._preview_generation and image_path == self._current_preview_file:
             self.lbl_status.setText(f"Ошибка предпросмотра: {error_msg}")
 
     def _start_batch_processing(self):
@@ -389,17 +396,22 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Ошибка", "Укажите папку сохранения.")
             return
 
+        # Snapshot active files to ensure queue immutability during batch
+        batch_files = list(self._active_files)
+
         self.btn_process.setEnabled(False)
         self.btn_cancel.setVisible(True)
         self.btn_cancel.setEnabled(True)
         self.btn_open_folder.setVisible(False)
+        self.batch_list.btn_clear.setEnabled(False)
+        self.drop_zone.setEnabled(False)
         self.progress_bar.setVisible(True)
-        self.progress_bar.setMaximum(len(self._active_files))
+        self.progress_bar.setMaximum(len(batch_files))
         self.progress_bar.setValue(0)
         self.lbl_status.setText("Обработка изображений...")
 
         cfg = self.settings_panel.get_current_config()
-        self._batch_worker = BatchProcessWorker(self.pipeline, self._active_files, out_dir, cfg)
+        self._batch_worker = BatchProcessWorker(self.pipeline, batch_files, out_dir, cfg)
         self._batch_worker.item_progress.connect(self._on_batch_item_progress)
         self._batch_worker.batch_finished.connect(self._on_batch_finished)
         self._batch_worker.start()
@@ -424,6 +436,8 @@ class MainWindow(QMainWindow):
         self.btn_process.setEnabled(True)
         self.btn_cancel.setVisible(False)
         self.btn_open_folder.setVisible(True)
+        self.batch_list.btn_clear.setEnabled(True)
+        self.drop_zone.setEnabled(True)
 
         success_count = sum(1 for r in results if r.success)
         cancelled_count = sum(1 for r in results if r.error_message == "Отменено пользователем")
@@ -465,3 +479,27 @@ class MainWindow(QMainWindow):
                 subprocess.Popen(["xdg-open", folder])
         else:
             QMessageBox.warning(self, "Папка не найдена", f"Папка не существует:\n{folder}")
+
+    def closeEvent(self, event):
+        """Ensures safe termination of running worker threads to prevent crashes."""
+        if hasattr(self, "_preview_timer") and self._preview_timer.isActive():
+            self._preview_timer.stop()
+
+        if self._batch_worker and self._batch_worker.isRunning():
+            self._batch_worker.cancel()
+            if not self._batch_worker.wait(2000):
+                logger.warning("BatchProcessWorker did not exit within 2s, terminating...")
+                self._batch_worker.terminate()
+                self._batch_worker.wait(500)
+
+        if self._current_preview_worker and self._current_preview_worker.isRunning():
+            try:
+                self._current_preview_worker.preview_ready.disconnect()
+                self._current_preview_worker.preview_failed.disconnect()
+            except Exception:
+                pass
+            if not self._current_preview_worker.wait(1000):
+                self._current_preview_worker.terminate()
+                self._current_preview_worker.wait(500)
+
+        super().closeEvent(event)

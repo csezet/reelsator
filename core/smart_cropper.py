@@ -10,11 +10,44 @@ Uses OpenCV Face Detection to position faces naturally according to the Rule of 
 """
 
 import os
+import sys
+import tempfile
+import shutil
+import logging
 from enum import Enum
 from typing import Tuple, Optional
 from PIL import Image
 import numpy as np
 import cv2
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_load_cascade(path: str) -> Optional[cv2.CascadeClassifier]:
+    """Loads OpenCV CascadeClassifier safely, handling Windows non-ASCII file paths."""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        classifier = cv2.CascadeClassifier(path)
+        if classifier and not classifier.empty():
+            return classifier
+    except Exception:
+        pass
+
+    # OpenCV C++ FileStorage on Windows fails on non-ASCII/Unicode directory paths.
+    # Fallback: copy XML to safe temporary directory and load from there.
+    try:
+        temp_dir = os.path.join(tempfile.gettempdir(), "reelsator_cascades")
+        os.makedirs(temp_dir, exist_ok=True)
+        temp_file = os.path.join(temp_dir, os.path.basename(path))
+        if not os.path.exists(temp_file) or os.path.getsize(temp_file) != os.path.getsize(path):
+            shutil.copy2(path, temp_file)
+        classifier = cv2.CascadeClassifier(temp_file)
+        if classifier and not classifier.empty():
+            return classifier
+    except Exception as e:
+        logger.debug("Failed safe_load_cascade fallback for %s: %s", path, e)
+    return None
 
 
 class AspectRatio(str, Enum):
@@ -40,8 +73,18 @@ class SmartCropper:
         self.frontal_cascade_path = os.path.join(cascade_dir, "haarcascade_frontalface_default.xml")
         self.profile_cascade_path = os.path.join(cascade_dir, "haarcascade_profileface.xml")
 
-        self.frontal_face_cascade = cv2.CascadeClassifier(self.frontal_cascade_path) if os.path.exists(self.frontal_cascade_path) else None
-        self.profile_face_cascade = cv2.CascadeClassifier(self.profile_cascade_path) if os.path.exists(self.profile_cascade_path) else None
+        # PyInstaller bundled fallback
+        if not os.path.exists(self.frontal_cascade_path):
+            base_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            cand1 = os.path.join(base_dir, "cv2", "data", "haarcascade_frontalface_default.xml")
+            if os.path.exists(cand1):
+                self.frontal_cascade_path = cand1
+            cand2 = os.path.join(base_dir, "cv2", "data", "haarcascade_profileface.xml")
+            if os.path.exists(cand2):
+                self.profile_cascade_path = cand2
+
+        self.frontal_face_cascade = _safe_load_cascade(self.frontal_cascade_path)
+        self.profile_face_cascade = _safe_load_cascade(self.profile_cascade_path)
 
     def detect_face(self, image: Image.Image) -> Optional[Tuple[int, int, int, int]]:
         """Detects the primary face in the image and returns (x, y, w, h).

@@ -87,16 +87,38 @@ class TestReelsatorGUI(unittest.TestCase):
         from core.exif_spoofer import MetadataMode
         panel = SettingsPanelWidget()
         panel.combo_metadata.setCurrentIndex(0)
-        cfg = panel.get_current_config()
-        self.assertEqual(cfg.metadata_mode, MetadataMode.MINIMAL)
+        cfg0 = panel.get_current_config()
+        self.assertEqual(cfg0.metadata_mode, MetadataMode.NO_EXIF)
 
         panel.combo_metadata.setCurrentIndex(1)
+        cfg1 = panel.get_current_config()
+        self.assertEqual(cfg1.metadata_mode, MetadataMode.MINIMAL)
+
+        panel.combo_metadata.setCurrentIndex(2)
         cfg2 = panel.get_current_config()
         self.assertEqual(cfg2.metadata_mode, MetadataMode.SYNTHETIC_CAMERA)
 
-        cfg.metadata_mode = MetadataMode.MINIMAL
-        panel.set_config(cfg)
+        cfg1.metadata_mode = MetadataMode.MINIMAL
+        panel.set_config(cfg1)
         self.assertEqual(panel.combo_metadata.currentData(), MetadataMode.MINIMAL)
+
+    def test_settings_panel_output_dir_customization(self):
+        """Verify that user-customized output directory is not overwritten by default suggestions."""
+        panel = SettingsPanelWidget()
+        self.assertFalse(panel.has_user_customized_output_dir())
+
+        # Simulate user typing custom path
+        panel.txt_output_dir.setText("C:/CustomFolder")
+        panel._on_output_dir_edited("C:/CustomFolder")
+        self.assertTrue(panel.has_user_customized_output_dir())
+
+        # Calling set_output_dir without force should not overwrite
+        panel.set_output_dir("C:/AutoFolder", force=False)
+        self.assertEqual(panel.get_output_dir(), "C:/CustomFolder")
+
+        # Calling with force=True should overwrite
+        panel.set_output_dir("C:/ForcedFolder", force=True)
+        self.assertEqual(panel.get_output_dir(), "C:/ForcedFolder")
 
     def test_settings_panel_preserves_config_fields(self):
         """Verify that UI adjustments preserve non-GUI fields via dataclasses.replace."""

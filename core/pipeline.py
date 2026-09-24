@@ -6,9 +6,12 @@ for bulk-processing AI images into Instagram-ready posts.
 
 import os
 import time
+import logging
 from dataclasses import dataclass
 from typing import List, Callable, Optional, Dict, Any
 from .insta_optimizer import InstaOptimizer, ProcessingConfig
+
+logger = logging.getLogger(__name__)
 
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
@@ -94,7 +97,6 @@ class BatchPipeline:
             config = ProcessingConfig.ofm_master()
 
         cancel_fn = cancel_check or is_cancelled
-        os.makedirs(output_dir, exist_ok=True)
         results = []
         total = len(input_paths)
         reserved_paths: set = set()
@@ -107,6 +109,22 @@ class BatchPipeline:
             except TypeError:
                 # Support legacy 4-argument callbacks
                 progress_callback(idx, tot, fn, succ)
+
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except Exception as e:
+            logger.error("Failed to create output directory %s: %s", output_dir, e)
+            for idx, p in enumerate(input_paths, start=1):
+                fn = os.path.basename(p)
+                res = ProcessItemResult(
+                    input_path=p,
+                    output_path="",
+                    success=False,
+                    error_message=f"Ошибка создания папки: {e}",
+                )
+                results.append(res)
+                _notify(idx, total, fn, False, f"Ошибка папки: {e}")
+            return results
 
         for idx, input_path in enumerate(input_paths, start=1):
             if cancel_fn and cancel_fn():

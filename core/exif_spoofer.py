@@ -12,6 +12,7 @@ import piexif
 
 
 class MetadataMode(str, Enum):
+    NO_EXIF = "no_exif"
     MINIMAL = "minimal"
     SYNTHETIC_CAMERA = "synthetic_camera"
 
@@ -86,9 +87,34 @@ class ExifSpoofer:
         random_seed: Optional[int] = None,
     ) -> bytes:
         """Constructs complete, valid camera EXIF byte sequence."""
+        if mode == MetadataMode.NO_EXIF:
+            return b""
+
+        if mode == MetadataMode.MINIMAL:
+            zeroth_ifd = {
+                piexif.ImageIFD.Orientation: 1,
+                piexif.ImageIFD.XResolution: (72, 1),
+                piexif.ImageIFD.YResolution: (72, 1),
+                piexif.ImageIFD.ResolutionUnit: 2,  # Inches
+            }
+            exif_ifd = {
+                piexif.ExifIFD.ExifVersion: b"0232",
+                piexif.ExifIFD.ColorSpace: 1,  # sRGB
+                piexif.ExifIFD.PixelXDimension: width,
+                piexif.ExifIFD.PixelYDimension: height,
+            }
+            # Only include capture timestamps if explicitly provided by caller
+            if capture_time is not None:
+                date_str = capture_time.strftime("%Y:%m:%d %H:%M:%S")
+                zeroth_ifd[piexif.ImageIFD.DateTime] = date_str
+                exif_ifd[piexif.ExifIFD.DateTimeOriginal] = date_str
+                exif_ifd[piexif.ExifIFD.DateTimeDigitized] = date_str
+
+            return piexif.dump({"0th": zeroth_ifd, "Exif": exif_ifd})
+
         rng = random.Random(random_seed) if random_seed is not None else random
 
-        # Generate realistic date
+        # Generate realistic date for synthetic camera mode
         if capture_time is None:
             delta_minutes = rng.randint(15, 720)
             if random_seed is not None:
@@ -100,27 +126,7 @@ class ExifSpoofer:
                 capture_time = datetime.now() - timedelta(minutes=delta_minutes)
 
         date_str = capture_time.strftime("%Y:%m:%d %H:%M:%S")
-
         subsec_str = f"{rng.randint(10, 999):03d}"
-
-        if mode == MetadataMode.MINIMAL:
-            zeroth_ifd = {
-                piexif.ImageIFD.Software: "Reelsator",
-                piexif.ImageIFD.Orientation: 1,
-                piexif.ImageIFD.XResolution: (72, 1),
-                piexif.ImageIFD.YResolution: (72, 1),
-                piexif.ImageIFD.ResolutionUnit: 2,  # Inches
-                piexif.ImageIFD.DateTime: date_str,
-            }
-            exif_ifd = {
-                piexif.ExifIFD.ExifVersion: b"0232",
-                piexif.ExifIFD.ColorSpace: 1,  # sRGB
-                piexif.ExifIFD.PixelXDimension: width,
-                piexif.ExifIFD.PixelYDimension: height,
-                piexif.ExifIFD.DateTimeOriginal: date_str,
-                piexif.ExifIFD.DateTimeDigitized: date_str,
-            }
-            return piexif.dump({"0th": zeroth_ifd, "Exif": exif_ifd})
 
         # Synthetic camera capture mode
         spec = cls.DEVICE_SPECS.get(device, cls.DEVICE_SPECS[CameraPreset.IPHONE_15_PRO])

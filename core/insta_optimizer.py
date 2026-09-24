@@ -161,29 +161,35 @@ class InstaOptimizer:
         clean_img = clean_image_buffer(image, alpha_background=config.alpha_background)
         normalized_size = clean_img.size
 
-        # Step 2: Perturb latent frequency watermarks / grid artifacts
-        if config.disrupt_strength > 0:
-            clean_img = disrupt_watermarks(
-                clean_img,
-                strength=config.disrupt_strength,
-                enable_micro_rotation=True,
-                enable_pixel_jitter=True,
-                seed=config.random_seed,
-            )
-
-        # Step 3: Smart Face-Centered Cropping to Instagram Aspect Ratio
+        # Step 2: Smart Face-Centered Cropping to Target Instagram Aspect Ratio (Memory Optimization)
+        # Cropping and scaling first dramatically reduces memory footprint for downstream pixel operations
         if config.aspect_ratio == AspectRatio.ORIGINAL:
             # Preserve normalized dimensions (post-orientation transposition)
             if clean_img.size != normalized_size:
                 framed_img = clean_img.resize(normalized_size, Image.LANCZOS)
             else:
                 framed_img = clean_img
+            target_size = normalized_size
         else:
             framed_img = self.cropper.crop_and_scale(
                 clean_img,
                 aspect_ratio=config.aspect_ratio,
                 use_smart_face_centering=config.use_smart_face_centering,
             )
+            target_size = framed_img.size
+
+        # Step 3: Perturb latent frequency watermarks / grid artifacts at target resolution
+        if config.disrupt_strength > 0:
+            framed_img = disrupt_watermarks(
+                framed_img,
+                strength=config.disrupt_strength,
+                enable_micro_rotation=True,
+                enable_pixel_jitter=True,
+                seed=config.random_seed,
+            )
+            # Ensure precise target dimension adherence after micro-rotation
+            if framed_img.size != target_size:
+                framed_img = framed_img.resize(target_size, Image.LANCZOS)
 
         # Step 4: Apply Physical Camera Optics & Film Emulation
         final_img = CameraOptics.apply_all(
@@ -240,15 +246,17 @@ class InstaOptimizer:
         tmp_name = f".tmp_{os.getpid()}_{base_name}"
         tmp_path = os.path.join(target_dir, tmp_name)
 
+        save_kwargs = {
+            "format": "JPEG",
+            "quality": config.jpeg_quality,
+            "subsampling": 2,
+            "optimize": True,
+        }
+        if exif_bytes:
+            save_kwargs["exif"] = exif_bytes
+
         try:
-            processed_img.save(
-                tmp_path,
-                format="JPEG",
-                quality=config.jpeg_quality,
-                subsampling=2,
-                optimize=True,
-                exif=exif_bytes,
-            )
+            processed_img.save(tmp_path, **save_kwargs)
             if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
                 raise IOError(f"Failed to generate output JPEG at {tmp_path}")
 

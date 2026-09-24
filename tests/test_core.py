@@ -222,8 +222,13 @@ class TestReelsatorCore(unittest.TestCase):
         min_bytes = ExifSpoofer.generate_exif(1080, 1350, mode=MetadataMode.MINIMAL)
         min_dict = piexif.load(min_bytes)
         self.assertNotIn(piexif.ImageIFD.Make, min_dict["0th"])
-        self.assertEqual(min_dict["0th"][piexif.ImageIFD.Software], b"Reelsator")
+        self.assertNotIn(piexif.ImageIFD.Software, min_dict["0th"])
+        self.assertNotIn(piexif.ExifIFD.DateTimeOriginal, min_dict["Exif"])
         self.assertEqual(min_dict["Exif"][piexif.ExifIFD.ColorSpace], 1)
+
+        # NO_EXIF mode
+        no_exif_bytes = ExifSpoofer.generate_exif(1080, 1350, mode=MetadataMode.NO_EXIF)
+        self.assertEqual(no_exif_bytes, b"")
 
         # Synthetic camera mode
         synth_bytes = ExifSpoofer.generate_exif(1080, 1350, mode=MetadataMode.SYNTHETIC_CAMERA)
@@ -380,7 +385,71 @@ class TestReelsatorCore(unittest.TestCase):
             self.assertFalse(results[2].success)
             self.assertEqual(results[2].error_message, "Отменено пользователем")
 
+    def test_palette_png_with_trns_transparency(self):
+        """Verify that palette PNGs (mode P) with tRNS chunk composite transparent pixels onto white."""
+        # Create an RGBA image with a transparent pixel and a red pixel
+        rgba_img = Image.new("RGBA", (10, 10), (0, 0, 0, 0))
+        rgba_img.putpixel((5, 5), (255, 0, 0, 255))
+
+        # Convert to palette mode with transparency
+        palette_img = rgba_img.convert("P", palette=Image.ADAPTIVE)
+        # Verify transparency info is preserved in the converted image
+        palette_img.info["transparency"] = 0
+
+        # Clean buffer
+        clean = clean_image_buffer(palette_img)
+        self.assertEqual(clean.mode, "RGB")
+        # Pixel (0, 0) was transparent; should now be white (255, 255, 255)
+        r, g, b = clean.getpixel((0, 0))
+        self.assertEqual((r, g, b), (255, 255, 255))
+        # Pixel (5, 5) was red; should remain red
+        r5, g5, b5 = clean.getpixel((5, 5))
+        self.assertEqual((r5, g5, b5), (255, 0, 0))
+
+    def test_metadata_mode_no_exif(self):
+        """Verify that MetadataMode.NO_EXIF returns 0 bytes of EXIF and leaves no APP1 EXIF segment."""
+        cfg = ProcessingConfig(metadata_mode=MetadataMode.NO_EXIF)
+        optimizer = InstaOptimizer()
+        out_img, exif_bytes = optimizer.process_pil(self.test_img, cfg)
+        self.assertEqual(exif_bytes, b"")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src_file = os.path.join(tmpdir, "in.jpg")
+            dst_file = os.path.join(tmpdir, "out_no_exif.jpg")
+            self.test_img.save(src_file, format="JPEG")
+            optimizer.process_file(src_file, dst_file, cfg)
+
+            with open(dst_file, "rb") as f:
+                content = f.read()
+
+            # Ensure no APP1 (0xE1) EXIF segment was written to the JPEG file
+            from core.c2pa_killer import iter_jpeg_segments
+            markers = [marker for _, marker, _ in iter_jpeg_segments(content)]
+            self.assertNotIn(0xE1, markers)
+
+            exif_dict = piexif.load(content)
+            self.assertEqual(len(exif_dict["0th"]), 0)
+            self.assertEqual(len(exif_dict["Exif"]), 0)
+
+    def test_pipeline_output_dir_creation_failure(self):
+        """Verify that invalid output directory does not crash the pipeline and reports failure."""
+        pipeline = BatchPipeline()
+        invalid_dir = "\0/invalid_dir_name:<>|?*"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            f1 = os.path.join(tmpdir, "img1.jpg")
+            self.test_img.save(f1, format="JPEG")
+
+            results = pipeline.process_batch(
+                input_paths=[f1],
+                output_dir=invalid_dir,
+                config=ProcessingConfig.ofm_master(),
+            )
+            self.assertEqual(len(results), 1)
+            self.assertFalse(results[0].success)
+            self.assertIn("Ошибка создания папки", results[0].error_message)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

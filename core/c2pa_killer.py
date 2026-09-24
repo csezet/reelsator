@@ -47,6 +47,10 @@ def convert_icc_to_srgb(image: Image.Image) -> Image.Image:
     If no ICC profile is present, returns image unchanged.
     Safely falls back if the ICC profile is invalid or corrupted.
     """
+    # If palette image with transparency, promote to RGBA first to preserve alpha during color conversion
+    if image.mode == "P" and "transparency" in image.info:
+        image = image.convert("RGBA")
+
     icc = image.info.get("icc_profile")
     if not icc:
         return image
@@ -65,6 +69,10 @@ def convert_icc_to_srgb(image: Image.Image) -> Image.Image:
 
 def flatten_alpha_channel(image: Image.Image, background: Tuple[int, int, int] = (255, 255, 255)) -> Image.Image:
     """Composites transparent image over a solid background color (default: white) to prevent black artifacts in JPEG."""
+    # Palette image with transparency chunk (tRNS)
+    if image.mode == "P" and "transparency" in image.info:
+        image = image.convert("RGBA")
+
     if "A" not in image.getbands():
         return image.convert("RGB") if image.mode != "RGB" else image
     rgba = image.convert("RGBA")
@@ -195,6 +203,10 @@ def clean_image_buffer(image: Image.Image, alpha_background: Tuple[int, int, int
 
     Discards all container metadata, C2PA blocks, XMP, IPTC, and generative prompts.
     """
+    # 0. Promote palette image with transparency early so operations retain alpha
+    if image.mode == "P" and "transparency" in image.info:
+        image = image.convert("RGBA")
+
     # 1. Normalize physical orientation based on EXIF tag before stripping
     try:
         image = ImageOps.exif_transpose(image)
