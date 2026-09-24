@@ -21,6 +21,7 @@ from .exif_spoofer import ExifSpoofer, CameraPreset, MetadataMode
 
 TupleImageResult = Tuple[Image.Image, bytes]
 MAX_IMAGE_PIXELS = 50_000_000  # 50 Megapixels safety limit
+MAX_ORIGINAL_DIMENSION = 4096   # Maximum dimension cap for Original mode to guarantee safe RAM usage
 
 
 def validate_image_dimensions(image: Image.Image) -> None:
@@ -164,12 +165,16 @@ class InstaOptimizer:
         # Step 2: Smart Face-Centered Cropping to Target Instagram Aspect Ratio (Memory Optimization)
         # Cropping and scaling first dramatically reduces memory footprint for downstream pixel operations
         if config.aspect_ratio == AspectRatio.ORIGINAL:
-            # Preserve normalized dimensions (post-orientation transposition)
-            if clean_img.size != normalized_size:
-                framed_img = clean_img.resize(normalized_size, Image.LANCZOS)
+            # Preserve normalized dimensions (post-orientation transposition),
+            # but cap maximum dimension at 4096 px to ensure RAM stays strictly within a safe budget
+            w, h = normalized_size
+            if max(w, h) > MAX_ORIGINAL_DIMENSION:
+                scale = MAX_ORIGINAL_DIMENSION / max(w, h)
+                target_size = (int(round(w * scale)), int(round(h * scale)))
+                framed_img = clean_img.resize(target_size, Image.LANCZOS)
             else:
                 framed_img = clean_img
-            target_size = normalized_size
+                target_size = normalized_size
         else:
             framed_img = self.cropper.crop_and_scale(
                 clean_img,

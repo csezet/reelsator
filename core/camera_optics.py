@@ -46,9 +46,9 @@ class CameraOptics:
         base_sigma = (1.6 + (iso / 200.0) * 0.8) * grain_strength
 
         rng = np.random.default_rng(seed)
-        # Luminance noise (monochrome component, 80%) + subtle chroma noise (20%)
-        mono_noise = rng.normal(0.0, base_sigma * 0.8, (h, w, 1)).astype(np.float32)
-        color_noise = rng.normal(0.0, base_sigma * 0.2, (h, w, c)).astype(np.float32)
+        # Luminance noise (monochrome component, 80%) + subtle chroma noise (20%) directly in float32
+        mono_noise = rng.standard_normal((h, w, 1), dtype=np.float32) * np.float32(base_sigma * 0.8)
+        color_noise = rng.standard_normal((h, w, c), dtype=np.float32) * np.float32(base_sigma * 0.2)
         total_noise = (mono_noise + color_noise) * lum_mask
 
         noisy_arr = np.clip(arr + total_noise, 0.0, 255.0).astype(np.uint8)

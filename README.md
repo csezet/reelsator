@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D4.svg)](https://microsoft.com/windows)
 [![Framework](https://img.shields.io/badge/GUI-PySide6%20(Qt%206)-41CD52.svg)](https://qt.io/)
-[![Tests](https://img.shields.io/badge/Tests-37%20Passed-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-Passing-success.svg)]()
 [![CI](https://github.com/csezet/reelsator/actions/workflows/test.yml/badge.svg)](https://github.com/csezet/reelsator/actions/workflows/test.yml)
 [![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 
@@ -15,7 +15,7 @@
 
 ## 🔍 Инженерные задачи подготовки контента
 
-1. **Санитизация метаданных C2PA и промптов**: Генераторы встраивают в JPEG (APP11/JUMBF) и PNG (`caBX`, `c2pa`, `tEXt`) сертификаты происхождения и текстовые промпты. Reelsator побайтово удаляет эти блоки и выполняет пересборку в чистый пиксельный буфер.
+1. **Санитизация метаданных C2PA и промптов**: Генераторы встраивают в JPEG (APP11/JUMBF) и PNG (`caBX`, `c2pa`, `tEXt`) сертификаты происхождения и текстовые промпты. Reelsator декодирует изображение в чистый пиксельный буфер с полной отсечкой метаданных, а также предоставляет побайтовый парсер для удаления сегментов на уровне контейнера.
 2. **Управление цветом (Color Management)**: Приведение изображений из широких цветовых пространств (Display-P3, AdobeRGB) к стандартному sRGB через ICC-профилирование предотвращает искажение оттенков кожи.
 3. **Нормализация EXIF Orientation**: Автоматический учет ориентации кадра перед очисткой контейнера исключает переворот вертикальных фото.
 4. **Безопасная обработка прозрачности**: Автоматический композитинг альфа-канала PNG/WebP на нейтральный белый фон для предотвращения черных артефактов в JPEG.
@@ -49,7 +49,7 @@ flowchart TD
   * **Оптическая виньетка**: плавное падение освещенности к углам кадра ($cos^4$).
   * **Тональная калибровка Photonic Engine**: оптимизация контраста и теплоты тонов кожи.
 * **`core/exif_spoofer.py`**: Управление структурами EXIF:
-  * `NO_EXIF`: Полное удаление сегмента APP1 EXIF (0 байт метаданных).
+  * `NO_EXIF`: Полное отсутствие сегмента EXIF APP1 (чистый файл без метаданных съемки).
   * `MINIMAL`: Чистый технический профиль sRGB без фейковых дат и без идентификаторов софта.
   * `SYNTHETIC_CAMERA`: Синтез профилей реальных камер (iPhone 15 Pro, iPhone 16 Pro Max, Sony Alpha) с вычислением APEX ShutterSpeedValue ($Tv = \log_2(1 / t)$).
 * **`core/pipeline.py`**: Пакетная очередь с безопасным созданием папок, защитой от перезаписи файлов (`resolve_unique_output_path`), кооперативной отменой и гарантией изоляции очереди.

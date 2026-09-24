@@ -448,6 +448,15 @@ class TestReelsatorCore(unittest.TestCase):
             self.assertFalse(results[0].success)
             self.assertIn("Ошибка создания папки", results[0].error_message)
 
+    def test_original_mode_caps_dimension_at_4096(self):
+        """Verify that AspectRatio.ORIGINAL caps maximum dimension to 4096 px to ensure RAM safety."""
+        # 5000 x 2500 image (12.5 MP < 50 MP max)
+        huge_orig = Image.new("RGB", (5000, 2500), color=(100, 150, 200))
+        cfg = ProcessingConfig(aspect_ratio=AspectRatio.ORIGINAL)
+        optimizer = InstaOptimizer()
+        out_img, _ = optimizer.process_pil(huge_orig, cfg)
+        self.assertEqual(out_img.size, (4096, 2048))
+
 
 if __name__ == "__main__":
     unittest.main()

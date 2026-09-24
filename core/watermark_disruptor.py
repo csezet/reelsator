@@ -67,9 +67,9 @@ def disrupt_watermarks(
         arr = np.asarray(image, dtype=np.int16)
         rng = np.random.default_rng(seed)
 
-        # Gaussian micro-noise (sigma ~ 0.5 - 0.8) generated in float32 for memory efficiency
+        # Gaussian micro-noise (sigma ~ 0.5 - 0.8) generated directly in float32 for memory efficiency
         sigma = 0.6 * strength
-        gaussian_noise = rng.normal(0.0, sigma, arr.shape).astype(np.float32)
+        gaussian_noise = rng.standard_normal(arr.shape, dtype=np.float32) * np.float32(sigma)
 
         # Discrete integer LSB shift (-1, 0, 1) per channel in float32
         discrete_jitter = (rng.integers(-1, 2, size=arr.shape, dtype=np.int8) * 0.5).astype(np.float32)

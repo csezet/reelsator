@@ -194,6 +194,38 @@ class TestReelsatorGUI(unittest.TestCase):
         self.assertGreaterEqual(split_x, union_r.left())
         self.assertLessEqual(split_x, union_r.right())
 
+    def test_preview_generation_immediate_bump(self):
+        """Verify that _trigger_preview_update increments generation immediately to discard old in-flight previews."""
+        win = MainWindow()
+        win._current_preview_file = "test.jpg"
+        initial_gen = win._preview_generation
+        win._trigger_preview_update()
+        self.assertEqual(win._preview_generation, initial_gen + 1)
+        self.assertTrue(win._preview_timer.isActive())
+        win._preview_timer.stop()
+
+    def test_cooperative_close_event_with_batch_worker(self):
+        """Verify that closeEvent does not terminate running batch worker and delays closing cooperatively."""
+        from PySide6.QtGui import QCloseEvent
+        from core.pipeline import BatchPipeline
+        from gui.main_window import BatchProcessWorker
+
+        win = MainWindow()
+        pipeline = BatchPipeline()
+        worker = BatchProcessWorker(pipeline, [], "test_out", ProcessingConfig.ofm_master())
+        win._batch_worker = worker
+
+        # Mock worker.isRunning to True
+        worker.isRunning = lambda: True
+
+        event = QCloseEvent()
+        win.closeEvent(event)
+
+        # Event should be ignored so window does not close abruptly while running
+        self.assertFalse(event.isAccepted())
+        self.assertTrue(getattr(win, "_close_pending", False))
+        self.assertTrue(worker._is_cancelled)
+
 
 if __name__ == "__main__":
     unittest.main()

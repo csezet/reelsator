@@ -46,10 +46,9 @@ def run_smoke_test() -> int:
         print("[SMOKE-TEST] Verifying SmartCropper face cascade detector...")
         from core.smart_cropper import SmartCropper
         cropper = SmartCropper()
-        if cropper.frontal_face_cascade and not cropper.frontal_face_cascade.empty():
-            print(f"[SMOKE-TEST] Frontal face cascade loaded: {cropper.frontal_cascade_path}")
-        else:
-            print("[SMOKE-TEST] Note: Frontal face cascade empty or uninitialized (non-critical fallback).")
+        if not cropper.frontal_face_cascade or cropper.frontal_face_cascade.empty():
+            raise RuntimeError(f"Required OpenCV face cascade failed to load from: {cropper.frontal_cascade_path}")
+        print(f"[SMOKE-TEST] Frontal face cascade loaded successfully: {cropper.frontal_cascade_path}")
 
         # 4. Verify InstaOptimizer pipeline for all metadata modes
         print("[SMOKE-TEST] Running synthetic image through InstaOptimizer...")
