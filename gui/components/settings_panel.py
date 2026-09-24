@@ -12,7 +12,21 @@ from PySide6.QtCore import Qt, Signal
 from core.smart_cropper import AspectRatio
 from core.exif_spoofer import CameraPreset, MetadataMode
 from core.insta_optimizer import ProcessingConfig
+from gui.icon_utils import create_header_widget, get_app_icon
 
+
+class NoWheelSlider(QSlider):
+    """QSlider that ignores mouse wheel events to prevent accidental value changes during scrolling."""
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class NoWheelComboBox(QComboBox):
+    """QComboBox that ignores mouse wheel events to prevent accidental selection changes during scrolling."""
+
+    def wheelEvent(self, event):
+        event.ignore()
 
 
 class SettingsPanelWidget(QFrame):
@@ -38,44 +52,80 @@ class SettingsPanelWidget(QFrame):
         main_layout.setContentsMargins(16, 16, 16, 16)
         main_layout.setSpacing(14)
 
-        # Scroll Area for clean overflow handling
+        # Scroll Area for clean overflow handling with Windows 11 Fluent scrollbar
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet("background: transparent;")
+        scroll.setStyleSheet("""
+            QScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: transparent;
+                width: 6px;
+                margin: 4px 1px 4px 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 0.18);
+                min-height: 36px;
+                border-radius: 3px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(99, 102, 241, 0.7);
+            }
+            QScrollBar::handle:vertical:pressed {
+                background: #6366f1;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+                border: none;
+                background: none;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+            }
+        """)
 
         container = QWidget()
+        container.setObjectName("settingsContainer")
+        container.setStyleSheet("background: transparent; border: none;")
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 8, 0)
         layout.setSpacing(16)
 
         # --- Section 1: Presets ---
-        lbl_presets = QLabel("⚡ БЫСТРЫЕ ПРЕСЕТЫ", self)
-        lbl_presets.setObjectName("sectionHeader")
-        layout.addWidget(lbl_presets)
+        hdr_presets = create_header_widget("sparkles", "БЫСТРЫЕ ПРЕСЕТЫ", color="accent", icon_size=16, parent=self)
+        layout.addWidget(hdr_presets)
 
         preset_layout = QVBoxLayout()
         preset_layout.setSpacing(6)
 
-        self.btn_preset_ofm = QPushButton("⭐ OFM Master (Лента 4:5)")
+        self.btn_preset_ofm = QPushButton(" OFM Master (Лента 4:5)", self)
         self.btn_preset_ofm.setObjectName("pillButton")
+        self.btn_preset_ofm.setIcon(get_app_icon("star", "accent", 15))
         self.btn_preset_ofm.setCheckable(True)
         self.btn_preset_ofm.setChecked(True)
 
-        self.btn_preset_anti = QPushButton("🔬 Текстурирование матрицы (ISP & Bayer)")
+        self.btn_preset_anti = QPushButton(" Текстурирование матрицы (ISP & Bayer)", self)
         self.btn_preset_anti.setObjectName("pillButton")
+        self.btn_preset_anti.setIcon(get_app_icon("cpu", "accent", 15))
         self.btn_preset_anti.setCheckable(True)
 
-        self.btn_preset_natural = QPushButton("📱 iPhone Natural (Селфи)")
+        self.btn_preset_natural = QPushButton(" iPhone Natural (Селфи)", self)
         self.btn_preset_natural.setObjectName("pillButton")
+        self.btn_preset_natural.setIcon(get_app_icon("smartphone", "accent", 15))
         self.btn_preset_natural.setCheckable(True)
 
-        self.btn_preset_bypass = QPushButton("⚡ Глубокая обработка (Strong Processing)")
+        self.btn_preset_bypass = QPushButton(" Глубокая обработка (Strong Processing)", self)
         self.btn_preset_bypass.setObjectName("pillButton")
+        self.btn_preset_bypass.setIcon(get_app_icon("flame", "accent", 15))
         self.btn_preset_bypass.setCheckable(True)
 
-        self.btn_preset_story = QPushButton("🎬 Story / Reels (9:16)")
+        self.btn_preset_story = QPushButton(" Story / Reels (9:16)", self)
         self.btn_preset_story.setObjectName("pillButton")
+        self.btn_preset_story.setIcon(get_app_icon("film", "accent", 15))
         self.btn_preset_story.setCheckable(True)
 
         self.preset_group = QButtonGroup(self)
@@ -90,15 +140,13 @@ class SettingsPanelWidget(QFrame):
         self.btn_preset_bypass.clicked.connect(lambda: self._select_preset("bypass"))
         self.btn_preset_story.clicked.connect(lambda: self._select_preset("story"))
 
-
         layout.addLayout(preset_layout)
 
         # --- Section 2: Format & Framing ---
-        lbl_format = QLabel("📐 ФОРМАТ И КАДРИРОВАНИЕ", self)
-        lbl_format.setObjectName("sectionHeader")
-        layout.addWidget(lbl_format)
+        hdr_format = create_header_widget("crop", "ФОРМАТ И КАДРИРОВАНИЕ", color="accent", icon_size=16, parent=self)
+        layout.addWidget(hdr_format)
 
-        self.combo_aspect = QComboBox(self)
+        self.combo_aspect = NoWheelComboBox(self)
         self.combo_aspect.addItem("4:5 (1080x1350) • Instagram Feed (Топ)", AspectRatio.FEED_4_5)
         self.combo_aspect.addItem("1:1 (1080x1080) • Квадрат", AspectRatio.SQUARE_1_1)
         self.combo_aspect.addItem("9:16 (1080x1920) • Stories / Reels", AspectRatio.STORY_9_16)
@@ -112,17 +160,16 @@ class SettingsPanelWidget(QFrame):
         layout.addWidget(self.chk_face_detect)
 
         # --- Section 3: Camera Emulation (EXIF) ---
-        lbl_camera = QLabel("📷 ЭМУЛЯЦИЯ КАМЕРЫ И EXIF", self)
-        lbl_camera.setObjectName("sectionHeader")
-        layout.addWidget(lbl_camera)
+        hdr_camera = create_header_widget("camera", "ЭМУЛЯЦИЯ КАМЕРЫ И EXIF", color="accent", icon_size=16, parent=self)
+        layout.addWidget(hdr_camera)
 
-        self.combo_metadata = QComboBox(self)
+        self.combo_metadata = NoWheelComboBox(self)
         self.combo_metadata.addItem("Minimal (стандартный sRGB / без фейков)", MetadataMode.MINIMAL)
         self.combo_metadata.addItem("Synthetic Camera (Apple iPhone / Sony)", MetadataMode.SYNTHETIC_CAMERA)
         self.combo_metadata.currentIndexChanged.connect(self._on_ui_changed)
         layout.addWidget(self.combo_metadata)
 
-        self.combo_camera = QComboBox(self)
+        self.combo_camera = NoWheelComboBox(self)
         self.combo_camera.addItem("Apple iPhone 15 Pro (f/1.78, 24mm)", CameraPreset.IPHONE_15_PRO)
         self.combo_camera.addItem("Apple iPhone 16 Pro Max (f/1.78, 24mm)", CameraPreset.IPHONE_16_PRO_MAX)
         self.combo_camera.addItem("Sony A7 IV (f/2.8, 35mm GM)", CameraPreset.SONY_A7_IV)
@@ -130,10 +177,8 @@ class SettingsPanelWidget(QFrame):
         layout.addWidget(self.combo_camera)
 
         # --- Section 4: Optics & Frequency Sliders ---
-
-        lbl_optics = QLabel("🔬 ТОНКАЯ НАСТРОЙКА РЕАЛИЗМА И ОПТИКИ", self)
-        lbl_optics.setObjectName("sectionHeader")
-        layout.addWidget(lbl_optics)
+        hdr_optics = create_header_widget("sliders-horizontal", "ТОНКАЯ НАСТРОЙКА РЕАЛИЗМА И ОПТИКИ", color="accent", icon_size=16, parent=self)
+        layout.addWidget(hdr_optics)
 
         # Sensor Grain (Шум сенсора)
         self.slider_grain, self.val_grain = self._create_slider_row(
@@ -178,14 +223,14 @@ class SettingsPanelWidget(QFrame):
         layout.addWidget(self.chk_isp)
 
         # --- Section 5: Output Folder ---
-        lbl_out = QLabel("📂 ПАПКА СОХРАНЕНИЯ", self)
-        lbl_out.setObjectName("sectionHeader")
-        layout.addWidget(lbl_out)
+        hdr_out = create_header_widget("folder", "ПАПКА СОХРАНЕНИЯ", color="accent", icon_size=16, parent=self)
+        layout.addWidget(hdr_out)
 
         out_row = QHBoxLayout()
         self.txt_output_dir = QLineEdit(self._output_dir, self)
-        self.txt_output_dir.setStyleSheet("background-color: #242632; border: 1px solid #323544; border-radius: 6px; padding: 6px;")
-        btn_browse = QPushButton("Обзор...", self)
+        self.txt_output_dir.setStyleSheet("background-color: #242632; border: 1px solid #323544; border-radius: 6px; padding: 6px; color: #f3f4f6;")
+        btn_browse = QPushButton(" Обзор...", self)
+        btn_browse.setIcon(get_app_icon("folder-open", "muted", 14))
         btn_browse.clicked.connect(self._choose_output_dir)
 
         out_row.addWidget(self.txt_output_dir)
@@ -198,9 +243,10 @@ class SettingsPanelWidget(QFrame):
     def _create_slider_row(self, parent_layout, label_text, min_v, max_v, default_v, default_str):
         row = QHBoxLayout()
         lbl = QLabel(label_text, self)
-        lbl.setStyleSheet("font-size: 12px; color: #9ca3af;")
+        lbl.setStyleSheet("font-size: 12px; color: #9ca3af; background: transparent; border: none;")
         val_lbl = QLabel(default_str, self)
         val_lbl.setObjectName("valueLabel")
+        val_lbl.setStyleSheet("background: transparent; border: none;")
         val_lbl.setAlignment(Qt.AlignRight)
 
         row.addWidget(lbl)
@@ -208,7 +254,7 @@ class SettingsPanelWidget(QFrame):
         row.addWidget(val_lbl)
         parent_layout.addLayout(row)
 
-        slider = QSlider(Qt.Horizontal, self)
+        slider = NoWheelSlider(Qt.Horizontal, self)
         slider.setRange(min_v, max_v)
         slider.setValue(default_v)
         parent_layout.addWidget(slider)
@@ -321,8 +367,6 @@ class SettingsPanelWidget(QFrame):
         )
         self._current_config = cfg
         self.config_changed.emit(cfg)
-
-
 
     def get_current_config(self) -> ProcessingConfig:
         return self._current_config

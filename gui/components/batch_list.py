@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 
+from gui.icon_utils import get_app_icon, get_app_pixmap
+
 
 class BatchListWidget(QFrame):
     """Displays queued images, status badges, and processing stats."""
@@ -32,14 +34,24 @@ class BatchListWidget(QFrame):
 
         # Header row
         hdr = QHBoxLayout()
+        hdr.setSpacing(8)
+
+        self.icon_title = QLabel(self)
+        self.icon_title.setStyleSheet("background: transparent; border: none;")
+        self.icon_title.setPixmap(get_app_pixmap("layers", color="accent", size=16))
+        self.icon_title.setFixedSize(16, 16)
+
         self.lbl_title = QLabel("ОЧЕРЕДЬ ОБРАБОТКИ (0)", self)
         self.lbl_title.setObjectName("sectionHeader")
+        self.lbl_title.setStyleSheet("background: transparent; border: none;")
 
-        self.btn_clear = QPushButton("Очистить", self)
+        self.btn_clear = QPushButton(" Очистить", self)
+        self.btn_clear.setIcon(get_app_icon("trash", "muted", 13))
         self.btn_clear.setFixedHeight(26)
-        self.btn_clear.setStyleSheet("font-size: 11px; padding: 2px 10px;")
+        self.btn_clear.setStyleSheet("font-size: 11px; padding: 2px 10px; background-color: #2b2d38; border: 1px solid #373946;")
         self.btn_clear.clicked.connect(self._on_clear)
 
+        hdr.addWidget(self.icon_title)
         hdr.addWidget(self.lbl_title)
         hdr.addStretch()
         hdr.addWidget(self.btn_clear)
@@ -80,6 +92,23 @@ class BatchListWidget(QFrame):
                 font-size: 11px;
                 border: none;
                 padding: 6px;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: transparent;
+                width: 6px;
+                margin: 2px 0px 2px 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 0.18);
+                min-height: 24px;
+                border-radius: 3px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(99, 102, 241, 0.7);
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
             }
         """)
         self.table.itemClicked.connect(self._on_row_clicked)

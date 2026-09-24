@@ -15,7 +15,8 @@ from PySide6.QtGui import QDesktopServices, QIcon
 
 from core.insta_optimizer import InstaOptimizer, ProcessingConfig, validate_image_dimensions
 from core.pipeline import BatchPipeline, ProcessItemResult
-from gui.theme import DARK_THEME_QSS
+from gui.theme import DARK_THEME_QSS, apply_windows_dark_titlebar
+from gui.icon_utils import get_app_icon
 from gui.components.drop_zone import DropZoneWidget
 from gui.components.comparison_slider import ComparisonSliderWidget
 from gui.components.settings_panel import SettingsPanelWidget
@@ -97,7 +98,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Reelsator — Instagram AI Photo Preparation Studio (Windows 11)")
+        self.setWindowTitle("Reelsator")
         self.resize(1260, 840)
         self.setMinimumSize(1020, 680)
 
@@ -128,7 +129,10 @@ class MainWindow(QMainWindow):
 
         self._init_ui()
 
-
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Apply Windows 11 seamless titlebar matching the #121316 dark background
+        apply_windows_dark_titlebar(int(self.winId()), bg_color=0x00161312, hide_title_text=True)
 
     def _init_ui(self):
         central_widget = QWidget(self)
@@ -197,22 +201,25 @@ class MainWindow(QMainWindow):
         action_layout.addWidget(self.progress_bar)
 
         self.lbl_status = QLabel("Перетащите фото из ChatGPT для начала", self)
-        self.lbl_status.setStyleSheet("font-size: 12px; color: #9ca3af;")
+        self.lbl_status.setStyleSheet("font-size: 12px; color: #9ca3af; background: transparent; border: none;")
         action_layout.addWidget(self.lbl_status)
 
-        self.btn_process = QPushButton("⚡ Подготовить для Instagram", self)
+        self.btn_process = QPushButton(" Подготовить для Instagram", self)
         self.btn_process.setObjectName("primaryButton")
+        self.btn_process.setIcon(get_app_icon("zap", "white", 16))
         self.btn_process.setEnabled(False)
         self.btn_process.clicked.connect(self._start_batch_processing)
         action_layout.addWidget(self.btn_process)
 
-        self.btn_cancel = QPushButton("⛔ Отменить обработку", self)
+        self.btn_cancel = QPushButton(" Отменить обработку", self)
+        self.btn_cancel.setIcon(get_app_icon("trash", "white", 14))
         self.btn_cancel.setStyleSheet("background-color: #dc2626; color: white; font-weight: bold; padding: 8px; border-radius: 6px;")
         self.btn_cancel.setVisible(False)
         self.btn_cancel.clicked.connect(self._cancel_batch_processing)
         action_layout.addWidget(self.btn_cancel)
 
-        self.btn_open_folder = QPushButton("📂 Открыть папку с готовыми фото", self)
+        self.btn_open_folder = QPushButton(" Открыть папку с готовыми фото", self)
+        self.btn_open_folder.setIcon(get_app_icon("folder-open", "white", 16))
         self.btn_open_folder.setVisible(False)
         self.btn_open_folder.clicked.connect(self._open_output_folder)
         action_layout.addWidget(self.btn_open_folder)
@@ -235,9 +242,11 @@ class MainWindow(QMainWindow):
 
         title = QLabel("REELSATOR", self)
         title.setObjectName("titleLabel")
+        title.setStyleSheet("background: transparent; border: none;")
 
         subtitle = QLabel("Instagram AI Photo Preparation Studio", self)
         subtitle.setObjectName("subtitleLabel")
+        subtitle.setStyleSheet("background: transparent; border: none;")
 
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
@@ -246,16 +255,17 @@ class MainWindow(QMainWindow):
         hdr.addStretch()
 
         # Badges
-        badge_c2pa = QLabel("C2PA / PROVENANCE SANITIZER: АКТИВЕН", self)
+        badge_c2pa = QLabel(" C2PA SANITIZER: АКТИВЕН", self)
         badge_c2pa.setObjectName("badgeOk")
         hdr.addWidget(badge_c2pa)
 
-        badge_exif = QLabel("IPHONE 15/16 PRO EXIF: ГОТОВ", self)
+        badge_exif = QLabel(" IPHONE 15/16 PRO: ГОТОВ", self)
         badge_exif.setObjectName("badgeOk")
         hdr.addWidget(badge_exif)
 
-        btn_github = QPushButton("GitHub Репозиторий", self)
-        btn_github.setStyleSheet("font-size: 11px; padding: 4px 10px;")
+        btn_github = QPushButton(" GitHub", self)
+        btn_github.setIcon(get_app_icon("star", "muted", 13))
+        btn_github.setStyleSheet("font-size: 11px; padding: 4px 10px; background-color: #2b2d38; border: 1px solid #373946;")
         btn_github.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com/csezet/reelsator")))
         hdr.addWidget(btn_github)
 

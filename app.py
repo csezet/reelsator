@@ -32,7 +32,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("Reelsator")
-    app.setApplicationDisplayName("Reelsator — Instagram AI Photo Studio")
+    app.setApplicationDisplayName("")
     app.setOrganizationName("csezet")
 
     # Set application icon
@@ -47,6 +47,13 @@ def main():
     if os.path.exists(icon_path):
         window.setWindowIcon(QIcon(icon_path))
     window.show()
+
+    # Apply Windows 11 dark seamless titlebar
+    try:
+        from gui.theme import apply_windows_dark_titlebar
+        apply_windows_dark_titlebar(int(window.winId()), bg_color=0x00161312, hide_title_text=True)
+    except Exception:
+        pass
 
     sys.exit(app.exec())
 

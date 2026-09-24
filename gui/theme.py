@@ -1,14 +1,23 @@
 """Windows 11 Fluent Dark Theme QSS stylesheet and color palette for Reelsator."""
 
+import os
+
 DARK_THEME_QSS = """
-/* Global Window & Fonts */
+/* Global Window & Typography */
+QMainWindow, QDialog {
+    background-color: #121316;
+}
+
 QWidget {
-    background-color: #16171b;
     color: #e5e7eb;
     font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, sans-serif;
     font-size: 13px;
     selection-background-color: #6366f1;
     selection-color: #ffffff;
+}
+
+QWidget#centralWidget {
+    background-color: #121316;
 }
 
 /* Card Containers & Panels */
@@ -19,28 +28,70 @@ QFrame#cardPanel, QFrame#sidebarPanel {
 }
 
 QFrame#previewCard {
-    background-color: #121316;
+    background-color: #181920;
     border: 1px solid #2b2d38;
     border-radius: 12px;
 }
 
-/* Scrollbars */
+/* Sleek Windows 11 Fluent Scrollbars */
 QScrollBar:vertical {
     border: none;
     background: transparent;
-    width: 8px;
-    margin: 0px;
+    width: 6px;
+    margin: 4px 1px 4px 0px;
 }
 QScrollBar::handle:vertical {
-    background: #373946;
-    min-height: 24px;
-    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.16);
+    min-height: 36px;
+    border-radius: 3px;
 }
 QScrollBar::handle:vertical:hover {
-    background: #4b4e5f;
+    background: rgba(99, 102, 241, 0.7);
+}
+QScrollBar::handle:vertical:pressed {
+    background: #6366f1;
 }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0px;
+    border: none;
+    background: none;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    border: none;
+    background: none;
+}
+
+QScrollBar:horizontal {
+    border: none;
+    background: transparent;
+    height: 6px;
+    margin: 0px 4px 1px 4px;
+}
+QScrollBar::handle:horizontal {
+    background: rgba(255, 255, 255, 0.16);
+    min-width: 36px;
+    border-radius: 3px;
+}
+QScrollBar::handle:horizontal:hover {
+    background: rgba(99, 102, 241, 0.7);
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+    border: none;
+    background: none;
+}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    border: none;
+    background: none;
+}
+
+/* Scroll Area Backgrounds */
+QScrollArea {
+    background: transparent;
+    border: none;
+}
+QScrollArea > QWidget > QWidget {
+    background: transparent;
 }
 
 /* Push Buttons */
@@ -94,6 +145,7 @@ QPushButton#pillButton {
     border-radius: 16px;
     padding: 6px 14px;
     font-size: 12px;
+    text-align: left;
 }
 QPushButton#pillButton:hover {
     background-color: #2b2e3c;
@@ -153,13 +205,13 @@ QSlider::handle:horizontal {
 }
 QSlider::handle:horizontal:hover {
     background: #ffffff;
-    transform: scale(1.1);
 }
 
 /* CheckBox */
 QCheckBox {
     color: #e5e7eb;
     spacing: 8px;
+    background: transparent;
 }
 QCheckBox::indicator {
     width: 18px;
@@ -191,18 +243,22 @@ QProgressBar::chunk {
     border-radius: 5px;
 }
 
-/* Labels */
+/* Labels - Strictly Transparent to Eliminate Background Boxes */
 QLabel {
+    background-color: transparent;
+    border: none;
     color: #e5e7eb;
 }
 QLabel#titleLabel {
     font-size: 20px;
     font-weight: 700;
     color: #ffffff;
+    background-color: transparent;
 }
 QLabel#subtitleLabel {
     font-size: 12px;
     color: #9ca3af;
+    background-color: transparent;
 }
 QLabel#sectionHeader {
     font-size: 13px;
@@ -210,11 +266,13 @@ QLabel#sectionHeader {
     color: #c7d2fe;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    background-color: transparent;
 }
 QLabel#valueLabel {
     font-size: 12px;
     color: #818cf8;
     font-weight: 600;
+    background-color: transparent;
 }
 QLabel#badgeOk {
     background-color: #064e3b;
@@ -235,3 +293,34 @@ QLabel#badgeWarn {
     font-weight: 600;
 }
 """
+
+
+def apply_windows_dark_titlebar(hwnd: int, bg_color: int = 0x00161312, hide_title_text: bool = True):
+    """
+    Apply native Windows 11 immersive dark mode and seamless caption coloring.
+
+    Args:
+        hwnd: Native OS window handle (int(winId())).
+        bg_color: Color in COLORREF format (0x00BBGGRR). Default 0x00161312 matches #121316.
+        hide_title_text: If True, sets title text color to bg_color so top bar merges cleanly.
+    """
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        dwmapi = ctypes.windll.dwmapi
+        # DWMWA_USE_IMMERSIVE_DARK_MODE (20)
+        dark = wintypes.BOOL(True)
+        dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark), ctypes.sizeof(dark))
+        # DWMWA_CAPTION_COLOR (35)
+        caption = wintypes.DWORD(bg_color)
+        dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(caption), ctypes.sizeof(caption))
+        # DWMWA_TEXT_COLOR (36)
+        text_color = wintypes.DWORD(bg_color if hide_title_text else 0x00EBE7E5)
+        dwmapi.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(text_color), ctypes.sizeof(text_color))
+        # DWMWA_BORDER_COLOR (34)
+        border = wintypes.DWORD(bg_color)
+        dwmapi.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(border), ctypes.sizeof(border))
+    except Exception:
+        pass
