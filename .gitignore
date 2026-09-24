@@ -39,3 +39,4 @@ temp/
 Thumbs.db
 Desktop.ini
 .DS_Store
+run_interactive.py

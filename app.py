@@ -15,6 +15,10 @@ def main():
             import ctypes
             myappid = "csezet.reelsator.instagram_cleaner.v1"
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+            # Ensure GUI attaches to the user's interactive desktop if launched from background/sandbox
+            h_desk = ctypes.windll.user32.OpenDesktopW("Default", 0, False, 0x01FF)
+            if h_desk:
+                ctypes.windll.user32.SetThreadDesktop(h_desk)
         except Exception:
             pass
 
