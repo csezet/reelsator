@@ -5,7 +5,8 @@ import cv2
 cascade_dir = cv2.data.haarcascades
 datas = [
     (os.path.join(cascade_dir, 'haarcascade_frontalface_default.xml'), 'cv2/data'),
-    (os.path.join(cascade_dir, 'haarcascade_profileface.xml'), 'cv2/data')
+    (os.path.join(cascade_dir, 'haarcascade_profileface.xml'), 'cv2/data'),
+    ('assets', 'assets'),
 ]
 
 a = Analysis(
@@ -39,6 +40,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='assets/icon.ico',
 )
 coll = COLLECT(
     exe,

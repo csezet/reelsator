@@ -101,6 +101,14 @@ class MainWindow(QMainWindow):
         self.resize(1260, 840)
         self.setMinimumSize(1020, 680)
 
+        # Application icon
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for name in ("icon.ico", "icon.png"):
+            cand = os.path.join(base_dir, "assets", name)
+            if os.path.exists(cand):
+                self.setWindowIcon(QIcon(cand))
+                break
+
         self.setStyleSheet(DARK_THEME_QSS)
 
         self.optimizer = InstaOptimizer()
