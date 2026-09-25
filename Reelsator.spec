@@ -7,6 +7,7 @@ datas = [
     (os.path.join(cascade_dir, 'haarcascade_frontalface_default.xml'), 'cv2/data'),
     (os.path.join(cascade_dir, 'haarcascade_profileface.xml'), 'cv2/data'),
     ('assets', 'assets'),
+    ('assets/icon.ico', '.'),
 ]
 
 a = Analysis(
