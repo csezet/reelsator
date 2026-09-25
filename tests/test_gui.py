@@ -292,6 +292,59 @@ class TestReelsatorGUI(unittest.TestCase):
                 app.processEvents()
                 win.close.assert_called_once()
 
+    def test_close_event_with_preview_worker_blocks_batch(self):
+        """Verify that when only PreviewWorker is active during closeEvent, UI controls are disabled,
+        batch processing cannot be launched, and window closes cleanly after preview completes."""
+        from PySide6.QtGui import QCloseEvent
+        from gui.main_window import PreviewWorker
+        from unittest.mock import MagicMock
+
+        win = MainWindow()
+        win._active_files = ["test1.jpg"]
+        win.btn_process.setEnabled(True)
+
+        preview_worker = PreviewWorker(win.optimizer, "test1.jpg", ProcessingConfig.ofm_master(), 1)
+        preview_worker.preview_ready.connect(win._on_preview_ready)
+        preview_worker.preview_failed.connect(win._on_preview_failed)
+        win._current_preview_worker = preview_worker
+
+        preview_is_running = True
+        preview_worker.isRunning = lambda: preview_is_running
+        win.close = MagicMock()
+
+        # User requests close while only preview is running
+        event = QCloseEvent()
+        win.closeEvent(event)
+
+        # 1. Close event must be rejected while preview is busy
+        self.assertFalse(event.isAccepted())
+        self.assertTrue(win._is_closing)
+
+        # 2. btn_process and inputs must be disabled immediately
+        self.assertFalse(win.btn_process.isEnabled())
+        self.assertFalse(win.drop_zone.isEnabled())
+        self.assertFalse(win.settings_panel.isEnabled())
+        self.assertFalse(win.batch_list.isEnabled())
+
+        # 3. Direct or UI invocation of _start_batch_processing must be blocked
+        win._start_batch_processing()
+        self.assertIsNone(win._batch_worker)
+
+        # 4. Direct or UI addition of files must be ignored
+        win._on_files_added(["test2.jpg"])
+        self.assertEqual(len(win._active_files), 1)
+
+        # 5. Repeated closeEvent must be handled gracefully without warnings
+        event_repeat = QCloseEvent()
+        win.closeEvent(event_repeat)
+        self.assertFalse(event_repeat.isAccepted())
+
+        # 6. Once preview completes, window closes cleanly
+        preview_is_running = False
+        win._check_and_close()
+        app.processEvents()
+        win.close.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

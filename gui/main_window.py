@@ -129,7 +129,10 @@ class MainWindow(QMainWindow):
         self._preview_timer.timeout.connect(self._run_preview_worker)
 
         self._is_closing: bool = False
+        self._close_pending: bool = False
         self._close_handlers_connected: bool = False
+        self._preview_signals_disconnected: bool = False
+        self._connected_close_workers: set = set()
 
         self._init_ui()
 
@@ -277,6 +280,9 @@ class MainWindow(QMainWindow):
 
     def _on_files_added(self, file_paths: List[str]):
         """Triggered when files are dropped or selected."""
+        if getattr(self, "_is_closing", False):
+            return
+
         # Merge unique files
         existing = set(self._active_files)
         new_files = [p for p in file_paths if p not in existing]
@@ -305,9 +311,13 @@ class MainWindow(QMainWindow):
 
     def _on_queue_item_selected(self, file_path: str):
         """User clicked a row in batch table to inspect."""
+        if getattr(self, "_is_closing", False):
+            return
         self._load_preview(file_path)
 
     def _on_clear_queue(self):
+        if getattr(self, "_is_closing", False):
+            return
         if self._batch_worker and self._batch_worker.isRunning():
             return
         self._active_files.clear()
@@ -320,6 +330,8 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText("Перетащите фото для начала")
 
     def _load_preview(self, file_path: str):
+        if getattr(self, "_is_closing", False):
+            return
         if not os.path.exists(file_path):
             return
 
@@ -340,10 +352,14 @@ class MainWindow(QMainWindow):
 
     def _on_config_changed(self, cfg: ProcessingConfig):
         """Settings or preset changed: update live preview."""
+        if getattr(self, "_is_closing", False):
+            return
         if self._current_preview_file:
             self._trigger_preview_update()
 
     def _trigger_preview_update(self):
+        if getattr(self, "_is_closing", False):
+            return
         if not self._current_preview_file:
             return
         # Immediately increment generation ID so any in-flight preview results for older configs are rejected instantly
@@ -352,6 +368,8 @@ class MainWindow(QMainWindow):
         self._preview_timer.start()
 
     def _run_preview_worker(self):
+        if getattr(self, "_is_closing", False):
+            return
         if not self._current_preview_file:
             return
 
@@ -361,6 +379,7 @@ class MainWindow(QMainWindow):
             return
 
         self._pending_preview = False
+        self._preview_signals_disconnected = False
         gen = self._preview_generation
         cfg = self.settings_panel.get_current_config()
 
@@ -387,15 +406,21 @@ class MainWindow(QMainWindow):
 
     @Slot(int, str, object)
     def _on_preview_ready(self, generation: int, image_path: str, processed_img):
+        if getattr(self, "_is_closing", False):
+            return
         if generation == self._preview_generation and image_path == self._current_preview_file:
             self.comparison_slider.set_after_image(processed_img)
 
     @Slot(int, str, str)
     def _on_preview_failed(self, generation: int, image_path: str, error_msg: str):
+        if getattr(self, "_is_closing", False):
+            return
         if generation == self._preview_generation and image_path == self._current_preview_file:
             self.lbl_status.setText(f"Ошибка предпросмотра: {error_msg}")
 
     def _start_batch_processing(self):
+        if getattr(self, "_is_closing", False):
+            return
         if not self._active_files:
             return
 
@@ -509,15 +534,32 @@ class MainWindow(QMainWindow):
         self._pending_preview = False
         self._preview_generation += 1
 
+        # Disable all UI controls that can create or initiate actions
+        if hasattr(self, "btn_process"):
+            self.btn_process.setEnabled(False)
+        if hasattr(self, "btn_cancel"):
+            self.btn_cancel.setEnabled(False)
+        if hasattr(self, "drop_zone"):
+            self.drop_zone.setEnabled(False)
+        if hasattr(self, "settings_panel"):
+            self.settings_panel.setEnabled(False)
+        if hasattr(self, "batch_list"):
+            self.batch_list.setEnabled(False)
+
         # Immediately cancel active batch processing if running
         if self._batch_worker and self._batch_worker.isRunning():
             self._batch_worker.cancel()
             self.lbl_status.setText("Завершение обработки текущего файла перед выходом...")
-            self.btn_cancel.setEnabled(False)
-            self.btn_process.setEnabled(False)
+        elif self._current_preview_worker and self._current_preview_worker.isRunning():
+            self.lbl_status.setText("Завершение предпросмотра перед выходом...")
 
-        # Disconnect preview worker signals so it never touches UI if finishing during closure
-        if self._current_preview_worker and self._current_preview_worker.isRunning():
+        # Disconnect preview worker signals once so it never touches UI and avoids duplicate RuntimeWarnings
+        if (
+            self._current_preview_worker
+            and self._current_preview_worker.isRunning()
+            and not getattr(self, "_preview_signals_disconnected", False)
+        ):
+            self._preview_signals_disconnected = True
             try:
                 self._current_preview_worker.preview_ready.disconnect(self._on_preview_ready)
             except (RuntimeError, Exception):
@@ -533,12 +575,18 @@ class MainWindow(QMainWindow):
 
         if batch_running or preview_running:
             # Wire up finished signals to re-trigger check_and_close once both finish
-            if not getattr(self, "_close_handlers_connected", False):
-                self._close_handlers_connected = True
-                if self._batch_worker:
-                    self._batch_worker.finished.connect(self._check_and_close)
-                if self._current_preview_worker:
-                    self._current_preview_worker.finished.connect(self._check_and_close)
+            if not hasattr(self, "_connected_close_workers"):
+                self._connected_close_workers = set()
+            self._close_handlers_connected = True
+
+            if batch_running and self._batch_worker not in self._connected_close_workers:
+                self._connected_close_workers.add(self._batch_worker)
+                self._batch_worker.finished.connect(self._check_and_close)
+
+            if preview_running and self._current_preview_worker not in self._connected_close_workers:
+                self._connected_close_workers.add(self._current_preview_worker)
+                self._current_preview_worker.finished.connect(self._check_and_close)
+
             event.ignore()
             return
 
