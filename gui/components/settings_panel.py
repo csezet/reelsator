@@ -151,7 +151,7 @@ class SettingsPanelWidget(QFrame):
         self.combo_aspect.addItem("4:5 (1080x1350) • Instagram Feed (Топ)", AspectRatio.FEED_4_5)
         self.combo_aspect.addItem("1:1 (1080x1080) • Квадрат", AspectRatio.SQUARE_1_1)
         self.combo_aspect.addItem("9:16 (1080x1920) • Stories / Reels", AspectRatio.STORY_9_16)
-        self.combo_aspect.addItem("Оригинальный размер", AspectRatio.ORIGINAL)
+        self.combo_aspect.addItem("Оригинальные пропорции (до 4096 px)", AspectRatio.ORIGINAL)
         self.combo_aspect.currentIndexChanged.connect(self._on_ui_changed)
         layout.addWidget(self.combo_aspect)
 

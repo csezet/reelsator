@@ -128,6 +128,9 @@ class MainWindow(QMainWindow):
         self._preview_timer.setInterval(200)
         self._preview_timer.timeout.connect(self._run_preview_worker)
 
+        self._is_closing: bool = False
+        self._close_handlers_connected: bool = False
+
         self._init_ui()
 
     def showEvent(self, event):
@@ -373,6 +376,10 @@ class MainWindow(QMainWindow):
             self._current_preview_worker = None
         worker.deleteLater()
 
+        # If window is closing, never launch another preview worker
+        if getattr(self, "_is_closing", False):
+            return
+
         # If a newer configuration arrived while worker was executing, run it now
         if self._pending_preview and self._current_preview_file:
             self._pending_preview = False
@@ -434,7 +441,7 @@ class MainWindow(QMainWindow):
 
     @Slot(list)
     def _on_batch_finished(self, results: List[ProcessItemResult]):
-        if getattr(self, "_close_pending", False):
+        if getattr(self, "_is_closing", False):
             return
 
         self.btn_process.setEnabled(True)
@@ -482,37 +489,56 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "Папка не найдена", f"Папка не существует:\n{folder}")
 
+    def _check_and_close(self):
+        """Called when any worker thread finishes while window close is pending."""
+        if not getattr(self, "_is_closing", False):
+            return
+        batch_running = bool(self._batch_worker and self._batch_worker.isRunning())
+        preview_running = bool(self._current_preview_worker and self._current_preview_worker.isRunning())
+        if not batch_running and not preview_running:
+            QTimer.singleShot(0, self.close)
+
     def closeEvent(self, event):
         """Ensures safe, cooperative termination of running worker threads without terminate()."""
+        self._is_closing = True
+        self._close_pending = True
+
+        # Stop preview timer and clear any pending requests immediately
         if hasattr(self, "_preview_timer") and self._preview_timer.isActive():
             self._preview_timer.stop()
+        self._pending_preview = False
+        self._preview_generation += 1
+
+        # Immediately cancel active batch processing if running
+        if self._batch_worker and self._batch_worker.isRunning():
+            self._batch_worker.cancel()
+            self.lbl_status.setText("Завершение обработки текущего файла перед выходом...")
+            self.btn_cancel.setEnabled(False)
+            self.btn_process.setEnabled(False)
 
         # Disconnect preview worker signals so it never touches UI if finishing during closure
         if self._current_preview_worker and self._current_preview_worker.isRunning():
             try:
-                self._current_preview_worker.preview_ready.disconnect()
-                self._current_preview_worker.preview_failed.disconnect()
-            except Exception:
+                self._current_preview_worker.preview_ready.disconnect(self._on_preview_ready)
+            except (RuntimeError, Exception):
                 pass
-            # Quick cooperative wait for preview worker (which operates on max 1600px preview image)
-            if not self._current_preview_worker.wait(300):
-                if not getattr(self, "_close_pending", False):
-                    self._close_pending = True
-                    self._current_preview_worker.finished.connect(lambda: QTimer.singleShot(0, self.close))
-                event.ignore()
-                return
+            try:
+                self._current_preview_worker.preview_failed.disconnect(self._on_preview_failed)
+            except (RuntimeError, Exception):
+                pass
 
-        # Handle active batch worker cooperatively
-        if self._batch_worker and self._batch_worker.isRunning():
-            if not getattr(self, "_close_pending", False):
-                self._close_pending = True
-                self._batch_worker.cancel()
-                self.lbl_status.setText("Завершение обработки текущего файла перед выходом...")
-                self.btn_cancel.setEnabled(False)
-                self.btn_process.setEnabled(False)
-                # When batch worker finishes cleanly, trigger final close from GUI thread
-                self._batch_worker.finished.connect(lambda: QTimer.singleShot(0, self.close))
-            # Ignore event to allow active file to complete safely without terminate()
+        # Check if ANY worker thread is still running
+        batch_running = bool(self._batch_worker and self._batch_worker.isRunning())
+        preview_running = bool(self._current_preview_worker and self._current_preview_worker.isRunning())
+
+        if batch_running or preview_running:
+            # Wire up finished signals to re-trigger check_and_close once both finish
+            if not getattr(self, "_close_handlers_connected", False):
+                self._close_handlers_connected = True
+                if self._batch_worker:
+                    self._batch_worker.finished.connect(self._check_and_close)
+                if self._current_preview_worker:
+                    self._current_preview_worker.finished.connect(self._check_and_close)
             event.ignore()
             return
 

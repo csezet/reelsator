@@ -457,6 +457,38 @@ class TestReelsatorCore(unittest.TestCase):
         out_img, _ = optimizer.process_pil(huge_orig, cfg)
         self.assertEqual(out_img.size, (4096, 2048))
 
+    def test_original_mode_dimensions_3000x2000(self):
+        """Verify that AspectRatio.ORIGINAL preserves exact dimensions for images <= 4096 px."""
+        img_3k = Image.new("RGB", (3000, 2000), color=(120, 140, 160))
+        cfg = ProcessingConfig(aspect_ratio=AspectRatio.ORIGINAL)
+        optimizer = InstaOptimizer()
+        out_img, _ = optimizer.process_pil(img_3k, cfg)
+        self.assertEqual(out_img.size, (3000, 2000))
+
+    def test_original_mode_dimensions_5000x2500(self):
+        """Verify that AspectRatio.ORIGINAL scales down images > 4096 px to 4096 on long edge."""
+        img_5k = Image.new("RGB", (5000, 2500), color=(100, 150, 200))
+        cfg = ProcessingConfig(aspect_ratio=AspectRatio.ORIGINAL)
+        optimizer = InstaOptimizer()
+        out_img, _ = optimizer.process_pil(img_5k, cfg)
+        self.assertEqual(out_img.size, (4096, 2048))
+
+    def test_clean_image_buffer_early_downscaling_orientation_and_color(self):
+        """Verify early downscaling preserves orientation transposition and sRGB color profile."""
+        from core.c2pa_killer import clean_image_buffer
+        # Create 5000x2500 with Orientation tag
+        base = Image.new("RGB", (5000, 2500), color=(255, 0, 0))
+        exif = piexif.dump({"0th": {piexif.ImageIFD.Orientation: 6}})
+        buf = io.BytesIO()
+        base.save(buf, format="JPEG", exif=exif)
+        buf.seek(0)
+
+        with Image.open(buf) as loaded:
+            cleaned = clean_image_buffer(loaded, max_dimension=4096)
+            # Orientation 6 rotates 90 CW (5000x2500 -> 2500x5000), then downscaled to 2048x4096
+            self.assertEqual(cleaned.size, (2048, 4096))
+            self.assertEqual(cleaned.mode, "RGB")
+
 
 if __name__ == "__main__":
     unittest.main()

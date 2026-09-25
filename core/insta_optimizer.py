@@ -159,22 +159,18 @@ class InstaOptimizer:
         validate_image_dimensions(image)
 
         # Step 1: Strip all metadata containers, normalize orientation, color profile, and alpha
-        clean_img = clean_image_buffer(image, alpha_background=config.alpha_background)
+        # For AspectRatio.ORIGINAL, cap early at MAX_ORIGINAL_DIMENSION (4096 px) before allocating raw buffers
+        max_dim = MAX_ORIGINAL_DIMENSION if config.aspect_ratio == AspectRatio.ORIGINAL else None
+        clean_img = clean_image_buffer(image, alpha_background=config.alpha_background, max_dimension=max_dim)
         normalized_size = clean_img.size
 
         # Step 2: Smart Face-Centered Cropping to Target Instagram Aspect Ratio (Memory Optimization)
         # Cropping and scaling first dramatically reduces memory footprint for downstream pixel operations
         if config.aspect_ratio == AspectRatio.ORIGINAL:
             # Preserve normalized dimensions (post-orientation transposition),
-            # but cap maximum dimension at 4096 px to ensure RAM stays strictly within a safe budget
-            w, h = normalized_size
-            if max(w, h) > MAX_ORIGINAL_DIMENSION:
-                scale = MAX_ORIGINAL_DIMENSION / max(w, h)
-                target_size = (int(round(w * scale)), int(round(h * scale)))
-                framed_img = clean_img.resize(target_size, Image.LANCZOS)
-            else:
-                framed_img = clean_img
-                target_size = normalized_size
+            # already safely capped at MAX_ORIGINAL_DIMENSION during early clean_image_buffer
+            framed_img = clean_img
+            target_size = normalized_size
         else:
             framed_img = self.cropper.crop_and_scale(
                 clean_img,

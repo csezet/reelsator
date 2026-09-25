@@ -226,6 +226,72 @@ class TestReelsatorGUI(unittest.TestCase):
         self.assertTrue(getattr(win, "_close_pending", False))
         self.assertTrue(worker._is_cancelled)
 
+    def test_concurrent_workers_cooperative_close(self):
+        """Verify MainWindow close with both preview and batch workers running in both completion orders."""
+        from PySide6.QtGui import QCloseEvent
+        from core.pipeline import BatchPipeline
+        from gui.main_window import BatchProcessWorker, PreviewWorker
+        from unittest.mock import MagicMock
+
+        for preview_finishes_first in [True, False]:
+            win = MainWindow()
+            pipeline = BatchPipeline()
+            batch_worker = BatchProcessWorker(pipeline, [], "test_out", ProcessingConfig.ofm_master())
+            preview_worker = PreviewWorker(win.optimizer, "dummy.jpg", ProcessingConfig.ofm_master(), 1)
+            preview_worker.preview_ready.connect(win._on_preview_ready)
+            preview_worker.preview_failed.connect(win._on_preview_failed)
+
+            win._batch_worker = batch_worker
+            win._current_preview_worker = preview_worker
+
+            batch_is_running = True
+            preview_is_running = True
+
+            batch_worker.isRunning = lambda: batch_is_running
+            preview_worker.isRunning = lambda: preview_is_running
+
+            # Mock close method to track when window actually closes
+            win.close = MagicMock()
+
+            # First close event
+            event1 = QCloseEvent()
+            win.closeEvent(event1)
+
+            # Verification 1: Close event rejected while workers active
+            self.assertFalse(event1.isAccepted())
+            # Verification 2: Batch worker cancellation invoked immediately on first close
+            self.assertTrue(batch_worker._is_cancelled)
+            self.assertTrue(win._is_closing)
+            self.assertFalse(win._preview_timer.isActive())
+
+            # Verification 3: Repeated close event while workers still running is rejected gracefully
+            event2 = QCloseEvent()
+            win.closeEvent(event2)
+            self.assertFalse(event2.isAccepted())
+
+            if preview_finishes_first:
+                # Step 1: Preview finishes first
+                preview_is_running = False
+                win._check_and_close()
+                win.close.assert_not_called()
+
+                # Step 2: Batch worker finishes second
+                batch_is_running = False
+                win._check_and_close()
+                app.processEvents()
+                win.close.assert_called_once()
+            else:
+                # Step 1: Batch worker finishes first
+                batch_is_running = False
+                win._check_and_close()
+                win.close.assert_not_called()
+
+                # Step 2: Preview finishes second
+                preview_is_running = False
+                win._check_and_close()
+                app.processEvents()
+                win.close.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

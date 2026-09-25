@@ -198,10 +198,17 @@ def strip_png_metadata(data: bytes) -> bytes:
     return out.getvalue()
 
 
-def clean_image_buffer(image: Image.Image, alpha_background: Tuple[int, int, int] = (255, 255, 255)) -> Image.Image:
+def clean_image_buffer(
+    image: Image.Image,
+    alpha_background: Tuple[int, int, int] = (255, 255, 255),
+    max_dimension: Optional[int] = None,
+) -> Image.Image:
     """Normalizes orientation, color profile, alpha channel, and extracts raw pixel buffer.
 
     Discards all container metadata, C2PA blocks, XMP, IPTC, and generative prompts.
+    If max_dimension is specified and any dimension exceeds it, performs early Lanczos downscaling
+    immediately after EXIF transposition to prevent excess RAM usage during ICC conversion,
+    alpha compositing, and full-resolution numpy array allocation.
     """
     # 0. Promote palette image with transparency early so operations retain alpha
     if image.mode == "P" and "transparency" in image.info:
@@ -212,6 +219,13 @@ def clean_image_buffer(image: Image.Image, alpha_background: Tuple[int, int, int
         image = ImageOps.exif_transpose(image)
     except Exception as e:
         logger.debug("exif_transpose skipped: %s", e)
+
+    # 1b. Early downscaling if max_dimension is set
+    if max_dimension is not None and max(image.size) > max_dimension:
+        w, h = image.size
+        scale = max_dimension / max(w, h)
+        target_size = (int(round(w * scale)), int(round(h * scale)))
+        image = image.resize(target_size, Image.LANCZOS)
 
     # 2. Color management: convert embedded color profile (e.g. Display-P3) to sRGB
     image = convert_icc_to_srgb(image)
