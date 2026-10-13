@@ -170,6 +170,11 @@ QComboBox {
 QComboBox:hover {
     border-color: #6366f1;
 }
+QComboBox:disabled {
+    background-color: #1a1b22;
+    color: #686b79;
+    border-color: #22242f;
+}
 QComboBox::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: top right;
@@ -205,6 +210,13 @@ QSlider::handle:horizontal {
 }
 QSlider::handle:horizontal:hover {
     background: #ffffff;
+}
+QSlider::sub-page:horizontal:disabled {
+    background: #414451;
+}
+QSlider::handle:horizontal:disabled {
+    background: #686b79;
+    border-color: #414451;
 }
 
 /* CheckBox */
@@ -273,6 +285,9 @@ QLabel#valueLabel {
     color: #818cf8;
     font-weight: 600;
     background-color: transparent;
+}
+QLabel#valueLabel:disabled {
+    color: #686b79;
 }
 QLabel#badgeOk {
     background-color: #064e3b;

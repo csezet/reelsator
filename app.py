@@ -2,6 +2,11 @@
 
 import sys
 import os
+import json
+import tempfile
+from pathlib import Path
+from dataclasses import replace
+from core.version import APP_VERSION
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
@@ -16,9 +21,17 @@ def get_resource_path(relative_path: str) -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 
-def run_smoke_test() -> int:
+def run_smoke_test(report_path=None) -> int:
     """Headless verification of GUI initialization, OpenCV cascades, assets, and processing pipeline."""
-    print("[SMOKE-TEST] Starting Reelsator smoke test...")
+    report = {"version": APP_VERSION, "frozen": bool(getattr(sys, "frozen", False)), "checks": [], "status": "failed"}
+
+    def record(message):
+        report["checks"].append(message)
+        if sys.stdout is not None:
+            print(f"[SMOKE-TEST] {message}")
+
+    test_folder = tempfile.TemporaryDirectory(prefix="reelsator-smoke-")
+    window = None
     try:
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
         app = QApplication.instance() or QApplication([sys.argv[0], "-platform", "offscreen"])
@@ -26,32 +39,37 @@ def run_smoke_test() -> int:
         app.setOrganizationName("csezet")
 
         # 1. Verify assets
-        print("[SMOKE-TEST] Checking application assets...")
+        record("Checking application assets...")
         icon_path = get_resource_path(os.path.join("assets", "icon.ico"))
         if not os.path.exists(icon_path):
             icon_path = get_resource_path(os.path.join("assets", "icon.png"))
         if not os.path.exists(icon_path):
-            print(f"[SMOKE-TEST] WARNING: Application icon not found: {icon_path}")
+            raise RuntimeError(f"Application icon not found: {icon_path}")
         else:
-            print(f"[SMOKE-TEST] Found icon at {icon_path}")
+            record("Application icon found.")
 
         # 2. Verify MainWindow instantiation
-        print("[SMOKE-TEST] Initializing MainWindow in offscreen mode...")
-        window = MainWindow()
+        record("Initializing MainWindow in offscreen mode...")
+        from core.user_presets import PresetStore, recipe_config
+        store = PresetStore(Path(test_folder.name) / "presets.json")
+        window = MainWindow(preset_store=store)
         if not window:
             raise RuntimeError("Failed to instantiate MainWindow")
-        print("[SMOKE-TEST] MainWindow initialized successfully.")
+        record("MainWindow initialized successfully.")
 
         # 3. Verify OpenCV Face Cascade
-        print("[SMOKE-TEST] Verifying SmartCropper face cascade detector...")
+        record("Verifying SmartCropper face cascade detector...")
         from core.smart_cropper import SmartCropper
         cropper = SmartCropper()
         if not cropper.frontal_face_cascade or cropper.frontal_face_cascade.empty():
             raise RuntimeError(f"Required OpenCV face cascade failed to load from: {cropper.frontal_cascade_path}")
-        print(f"[SMOKE-TEST] Frontal face cascade loaded successfully: {cropper.frontal_cascade_path}")
+        record("Frontal face cascade loaded successfully.")
+        if not cropper.profile_face_cascade or cropper.profile_face_cascade.empty():
+            raise RuntimeError("Required profile face cascade failed to load")
+        record("Profile face cascade loaded successfully.")
 
         # 4. Verify InstaOptimizer pipeline for all metadata modes
-        print("[SMOKE-TEST] Running synthetic image through InstaOptimizer...")
+        record("Running synthetic image through InstaOptimizer...")
         from PIL import Image
         from core.insta_optimizer import InstaOptimizer, ProcessingConfig
         from core.exif_spoofer import MetadataMode
@@ -66,20 +84,72 @@ def run_smoke_test() -> int:
                 raise RuntimeError(f"Optimizer failed for metadata mode {mode}")
             if mode == MetadataMode.NO_EXIF and len(exif_bytes) != 0:
                 raise RuntimeError("NO_EXIF mode returned non-empty exif_bytes!")
-            print(f"[SMOKE-TEST] Mode {mode.value} passed (output size: {out_img.size}, exif bytes: {len(exif_bytes)}).")
+            record(f"Mode {mode.value} passed (output size: {out_img.size}, exif bytes: {len(exif_bytes)}).")
 
-        print("[SMOKE-TEST] ALL SMOKE-TEST CHECKS PASSED SUCCESSFULLY!")
+        source = Path(test_folder.name) / "source.png"
+        test_img.save(source)
+        outputs = []
+        for name, button, factory in (
+            ("soft-flash", window.settings_panel.btn_preset_soft_flash, ProcessingConfig.soft_flash),
+            ("digicam-flash", window.settings_panel.btn_preset_digicam_flash, ProcessingConfig.digicam_flash),
+        ):
+            button.click()
+            if window.settings_panel.get_current_config() != factory():
+                raise RuntimeError(f"GUI preset mismatch: {name}")
+            cfg = replace(factory(), random_seed=1729)
+            preview = optimizer.process_preview_file(str(source), cfg)
+            destination = Path(test_folder.name) / f"{name}.jpg"
+            optimizer.process_file(str(source), str(destination), cfg)
+            with Image.open(destination) as saved:
+                exported = saved.convert("RGB")
+            if exported.tobytes() != preview.jpeg.tobytes() or destination.stat().st_size != preview.jpeg_size_bytes:
+                raise RuntimeError(f"JPEG preview/export mismatch: {name}")
+            outputs.append(exported.tobytes())
+            record(f"{name}: GUI controls and JPEG preview/export passed.")
+        if outputs[0] == outputs[1]:
+            raise RuntimeError("Flash preset outputs must be different")
+        window.settings_panel.slider_jpeg.setValue(93)
+        if not window.settings_panel.btn_reset_profile.isEnabled():
+            raise RuntimeError("Edited preset must allow reset")
+        personal = recipe_config(window.settings_panel.get_current_config())
+        store.save("Smoke Flash", personal)
+        if PresetStore(store.path).read().get("Smoke Flash") != personal:
+            raise RuntimeError("User preset persistence mismatch")
+        window.settings_panel._refresh_user_presets(selected="Smoke Flash")
+        window.settings_panel._on_user_preset_selected(window.settings_panel.combo_user_presets.currentIndex())
+        if window.settings_panel.get_current_config() != personal:
+            raise RuntimeError("User preset GUI loading mismatch")
+        record("User preset disk round-trip and GUI loading passed.")
+        report["status"] = "passed"
+        record("ALL SMOKE-TEST CHECKS PASSED SUCCESSFULLY!")
         return 0
     except Exception as e:
         import traceback
-        print(f"[SMOKE-TEST] FAILURE: {e}", file=sys.stderr)
-        traceback.print_exc()
+        report["error"] = str(e)
+        report["traceback"] = traceback.format_exc()
+        if sys.stderr is not None:
+            print(f"[SMOKE-TEST] FAILURE: {e}", file=sys.stderr)
+            traceback.print_exc()
         return 1
+    finally:
+        if window is not None:
+            window.close()
+        test_folder.cleanup()
+        if report_path is not None:
+            destination = Path(report_path)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def main():
     if "--smoke-test" in sys.argv:
-        code = run_smoke_test()
+        report_path = None
+        if "--smoke-test-report" in sys.argv:
+            index = sys.argv.index("--smoke-test-report")
+            if index + 1 >= len(sys.argv):
+                sys.exit(2)
+            report_path = sys.argv[index + 1]
+        code = run_smoke_test(report_path)
         sys.exit(code)
 
     # Windows taskbar icon grouping support

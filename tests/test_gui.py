@@ -2,6 +2,7 @@
 
 import unittest
 import sys
+from dataclasses import replace
 from PySide6.QtWidgets import QApplication
 from PIL import Image
 import numpy as np
@@ -125,12 +126,40 @@ class TestReelsatorGUI(unittest.TestCase):
         panel = SettingsPanelWidget()
         cfg = ProcessingConfig.ofm_master()
         cfg.random_seed = 999
+        cfg.bayer_strength = 0.35
+        cfg.sharpen_amount = 0.25
+        cfg.jpeg_quality = 84
+        cfg.alpha_background = (32, 64, 96)
         panel.set_config(cfg)
 
         panel.slider_grain.setValue(50)
         updated_cfg = panel.get_current_config()
         self.assertEqual(updated_cfg.grain_strength, 0.5)
         self.assertEqual(updated_cfg.random_seed, 999)
+        self.assertEqual(updated_cfg, replace(cfg, grain_strength=0.5))
+
+    def test_settings_panel_preserves_preset_strengths(self):
+        """Editing grain must not reset hidden Bayer and ISP strengths in any preset."""
+        panel = SettingsPanelWidget()
+        for preset in ("ofm", "natural", "anti", "bypass", "story", "soft_flash", "digicam_flash"):
+            with self.subTest(preset=preset):
+                panel._select_preset(preset)
+                before = panel.get_current_config()
+                panel.slider_grain.setValue(50)
+                self.assertEqual(panel.get_current_config(), replace(before, grain_strength=0.5))
+
+    def test_settings_panel_effect_toggles_retain_strengths(self):
+        """Disabling and enabling effects must retain their configured intensity."""
+        panel = SettingsPanelWidget()
+        cfg = ProcessingConfig(bayer_strength=0.35, sharpen_amount=0.25)
+        panel.set_config(cfg)
+        for enabled in (True, False, True):
+            panel.chk_bayer.setChecked(enabled)
+            panel.chk_isp.setChecked(enabled)
+            self.assertEqual(
+                panel.get_current_config(),
+                replace(cfg, enable_bayer_matrix=enabled, enable_isp_enhancement=enabled),
+            )
 
     def test_comparison_slider_differing_aspect_ratios(self):
         """Verify comparison slider handles images with different aspect ratios."""

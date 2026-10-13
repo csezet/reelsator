@@ -3,7 +3,7 @@
 import math
 from typing import Optional, Tuple
 from PySide6.QtWidgets import QWidget
-from PySide6.QtCore import Qt, QPoint, QRect, QSize
+from PySide6.QtCore import Qt, QPoint, QRect, QSize, QEvent
 from PySide6.QtGui import QPainter, QPixmap, QColor, QPen, QFont, QMouseEvent, QPainterPath
 from PIL import Image
 
@@ -51,15 +51,23 @@ def compute_slider_geometry(
     container_w: int,
     container_h: int,
     split_ratio: float = 0.5,
+    native_scale: Optional[float] = None,
 ) -> Tuple[QRect, Optional[QRect], QRect, int]:
     """Computes pure layout geometry for split comparison viewer.
 
     Returns:
         (rect_before, rect_after, union_rect, split_x)
     """
-    rect_before = compute_fitted_rect(before_size, container_w, container_h)
+    def image_rect(size: QSize) -> QRect:
+        if native_scale is None:
+            return compute_fitted_rect(size, container_w, container_h)
+        w = max(1, int(round(size.width() * native_scale)))
+        h = max(1, int(round(size.height() * native_scale)))
+        return QRect((container_w - w) // 2, (container_h - h) // 2, w, h)
+
+    rect_before = image_rect(before_size)
     if after_size is not None and not after_size.isEmpty():
-        rect_after = compute_fitted_rect(after_size, container_w, container_h)
+        rect_after = image_rect(after_size)
         union_rect = rect_before.united(rect_after)
     else:
         rect_after = None
@@ -82,17 +90,64 @@ class ComparisonSliderWidget(QWidget):
         self._pixmap_after: Optional[QPixmap] = None
         self._split_ratio: float = 0.5  # 0.0 to 1.0 (divider position)
         self._is_dragging: bool = False
+        self._zoom_100: bool = False
 
     def set_images(self, before_img: Image.Image, after_img: Optional[Image.Image] = None):
         """Sets PIL images for before and after display."""
         self._pixmap_before = self._pil_to_pixmap(before_img)
         self._pixmap_after = self._pil_to_pixmap(after_img) if after_img else None
+        self._update_view_size()
         self.update()
 
     def set_after_image(self, after_img: Image.Image):
         """Updates only the processed (after) image."""
         self._pixmap_after = self._pil_to_pixmap(after_img)
+        self._update_view_size()
         self.update()
+
+    def clear_images(self):
+        self._pixmap_before = None
+        self._pixmap_after = None
+        self._update_view_size()
+        self.update()
+
+    def clear_after_image(self):
+        self._pixmap_after = None
+        self._update_view_size()
+        self.update()
+
+    def set_zoom_100(self, enabled: bool):
+        """Use one source pixel per physical display pixel, including on HiDPI screens."""
+        self._zoom_100 = enabled
+        self._update_view_size()
+        self.update()
+
+    def _update_view_size(self):
+        pixmap = self._pixmap_after if self._pixmap_after is not None else self._pixmap_before
+        if self._zoom_100 and pixmap is not None:
+            ratio = self.devicePixelRatioF()
+            self.setFixedSize(
+                max(1, int(round(pixmap.width() / ratio))),
+                max(1, int(round(pixmap.height() / ratio))),
+            )
+        else:
+            self.setMaximumSize(16777215, 16777215)
+            self.setMinimumSize(320, 380)
+            if self._zoom_100:
+                self.resize(320, 380)
+
+    def _geometry(self):
+        return compute_slider_geometry(
+            self._pixmap_before.size(),
+            self._pixmap_after.size() if self._pixmap_after else None,
+            self.width(), self.height(), self._split_ratio,
+            native_scale=1.0 / self.devicePixelRatioF() if self._zoom_100 else None,
+        )
+
+    def event(self, event):
+        if event.type() == QEvent.Type.DevicePixelRatioChange and hasattr(self, "_zoom_100"):
+            self._update_view_size()
+        return super().event(event)
 
     @staticmethod
     def _pil_to_pixmap(pil_img: Image.Image) -> QPixmap:
@@ -111,7 +166,7 @@ class ComparisonSliderWidget(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, not self._zoom_100)
 
         w = self.width()
         h = self.height()
@@ -126,14 +181,7 @@ class ComparisonSliderWidget(QWidget):
             painter.drawText(self.rect(), Qt.AlignCenter, "Нет активного предпросмотра")
             return
 
-        after_size = self._pixmap_after.size() if self._pixmap_after else None
-        rect_before, rect_after, union_rect, split_x = compute_slider_geometry(
-            self._pixmap_before.size(),
-            after_size,
-            w,
-            h,
-            self._split_ratio,
-        )
+        rect_before, rect_after, union_rect, split_x = self._geometry()
 
         bw, bh = self._pixmap_before.width(), self._pixmap_before.height()
         ar_before = format_aspect_ratio(bw, bh)
@@ -216,13 +264,7 @@ class ComparisonSliderWidget(QWidget):
             self._update_split_from_mouse(event.pos().x())
         else:
             if self._pixmap_after and self._pixmap_before:
-                _, _, union_rect, split_x = compute_slider_geometry(
-                    self._pixmap_before.size(),
-                    self._pixmap_after.size(),
-                    self.width(),
-                    self.height(),
-                    self._split_ratio,
-                )
+                _, _, union_rect, split_x = self._geometry()
                 if abs(event.pos().x() - split_x) < 15:
                     self.setCursor(Qt.SplitHCursor)
                 else:
@@ -237,14 +279,7 @@ class ComparisonSliderWidget(QWidget):
     def _update_split_from_mouse(self, mouse_x: int):
         if not self._pixmap_before:
             return
-        after_size = self._pixmap_after.size() if self._pixmap_after else None
-        _, _, union_rect, _ = compute_slider_geometry(
-            self._pixmap_before.size(),
-            after_size,
-            self.width(),
-            self.height(),
-            self._split_ratio,
-        )
+        _, _, union_rect, _ = self._geometry()
 
         if union_rect.width() > 0:
             rel_x = mouse_x - union_rect.left()

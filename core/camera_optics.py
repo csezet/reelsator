@@ -147,25 +147,35 @@ class CameraOptics:
         image: Image.Image,
         strength: float = 1.0,
     ) -> Image.Image:
-        """Emulates the physical Bayer Color Filter Array (RGGB) found on real camera CMOS sensors.
+        """Adds balanced 2x2 luminance texture without changing channel differences or means.
 
-        Injects alternating-row sub-perceptual channel micro-offsets that destroy continuous
-        diffusion gradients without visible artifacting to the human eye.
+        The legacy Bayer name is retained for configuration compatibility. This is a
+        stylized microtexture, not a simulation of raw CFA sampling and demosaicing.
         """
         if strength <= 0:
             return image
 
+        offset = min(127, int(round(5.0 * strength)))
+        w, h = image.size
+        paired_w, paired_h = w - w % 2, h - h % 2
+        if offset <= 0 or paired_w == 0 or paired_h == 0:
+            return image
+
         arr = np.array(image, dtype=np.int16)
-        # Micro-offset (typically 6-12 levels depending on strength)
-        offset = int(round(10.0 * strength))
+        # Limit the common RGB offset to the available headroom of each complete
+        # 2x2 block. Symmetric +/- offsets then avoid clipping and preserve means.
+        headroom = np.minimum(arr.min(axis=2), 255 - arr.max(axis=2))
+        amplitude = np.minimum(offset, np.minimum.reduce((
+            headroom[0:paired_h:2, 0:paired_w:2],
+            headroom[0:paired_h:2, 1:paired_w:2],
+            headroom[1:paired_h:2, 0:paired_w:2],
+            headroom[1:paired_h:2, 1:paired_w:2],
+        )))[:, :, np.newaxis]
 
-        # Alternating row Green / Blue micro-displacement
-        arr[0::2, :, 1] = np.clip(arr[0::2, :, 1] - offset, 0, 255)
-        arr[0::2, :, 2] = np.clip(arr[0::2, :, 2] + offset, 0, 255)
-
-        # Alternating column Red / Green micro-displacement
-        arr[:, 0::2, 0] = np.clip(arr[:, 0::2, 0] + (offset // 2), 0, 255)
-        arr[:, 0::2, 1] = np.clip(arr[:, 0::2, 1] - (offset // 2), 0, 255)
+        arr[0:paired_h:2, 0:paired_w:2] += amplitude
+        arr[0:paired_h:2, 1:paired_w:2] -= amplitude
+        arr[1:paired_h:2, 0:paired_w:2] -= amplitude
+        arr[1:paired_h:2, 1:paired_w:2] += amplitude
 
         return Image.fromarray(arr.astype(np.uint8))
 

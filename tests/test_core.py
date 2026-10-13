@@ -5,12 +5,14 @@ import io
 import struct
 import tempfile
 import unittest
-from PIL import Image, PngImagePlugin
+from PIL import Image, ImageCms, PngImagePlugin
 import numpy as np
 import piexif
 
 from core.c2pa_killer import (
     clean_image_buffer,
+    convert_icc_to_srgb,
+    flatten_alpha_channel,
     strip_jpeg_metadata,
     strip_png_metadata,
     DISALLOWED_PNG_CHUNKS,
@@ -110,6 +112,38 @@ class TestReelsatorCore(unittest.TestCase):
         isp = CameraOptics.apply_isp_local_contrast(self.test_img, sharpen_amount=0.5, contrast_amount=0.1)
         self.assertEqual(isp.size, self.test_img.size)
 
+
+    def test_bayer_preserves_neutral_colors_and_brightness(self):
+        """Texture must preserve neutral RGB values and average brightness, even at odd sizes."""
+        for size in ((32, 32), (31, 29), (1, 9)):
+            for level in (0, 1, 128, 254, 255):
+                for strength in (0.7, 1.0, 1.4):
+                    with self.subTest(size=size, level=level, strength=strength):
+                        image = Image.new("RGB", size, (level, level, level))
+                        result = CameraOptics.apply_bayer_matrix(image, strength)
+                        arr = np.asarray(result)
+                        self.assertEqual(result.size, size)
+                        np.testing.assert_array_equal(arr[:, :, 0], arr[:, :, 1])
+                        np.testing.assert_array_equal(arr[:, :, 1], arr[:, :, 2])
+                        np.testing.assert_allclose(arr.mean(axis=(0, 1)), (level,) * 3)
+
+        textured = np.asarray(CameraOptics.apply_bayer_matrix(Image.new("RGB", (32, 32), (128,) * 3)))
+        self.assertGreater(textured[:, :, 0].std(), 0.0)
+
+    def test_bayer_preserves_color_and_clipped_pixels(self):
+        """Texture may change brightness without tinting colors or clipping channels."""
+        rng = np.random.default_rng(42)
+        original = rng.integers(0, 256, (29, 31, 3), dtype=np.uint8)
+        original[0, 0] = (0, 0, 0)
+        original[2, 2] = (255, 255, 255)
+        original[4, 4] = (255, 0, 0)
+        result = np.asarray(CameraOptics.apply_bayer_matrix(Image.fromarray(original), strength=1.4))
+        delta = result.astype(np.int16) - original.astype(np.int16)
+        np.testing.assert_array_equal(delta[:, :, 0], delta[:, :, 1])
+        np.testing.assert_array_equal(delta[:, :, 1], delta[:, :, 2])
+        np.testing.assert_allclose(result.mean(axis=(0, 1)), original.mean(axis=(0, 1)))
+        for position in ((0, 0), (2, 2), (4, 4)):
+            np.testing.assert_array_equal(result[position], original[position])
 
     def test_smart_cropper_dimensions(self):
         """Verify target cropping to 1080x1350 (4:5) and other Instagram formats."""
@@ -405,6 +439,79 @@ class TestReelsatorCore(unittest.TestCase):
         # Pixel (5, 5) was red; should remain red
         r5, g5, b5 = clean.getpixel((5, 5))
         self.assertEqual((r5, g5, b5), (255, 0, 0))
+
+    def test_rgb_and_grayscale_png_color_key_transparency(self):
+        """Real PNG tRNS color keys must composite onto the requested background."""
+        cases = (
+            ("RGB", (0, 0, 0), (220, 80, 30)),
+            ("RGB", (10, 20, 30), (220, 80, 30)),
+            ("L", 64, 180),
+        )
+        for mode, color_key, opaque_color in cases:
+            source = Image.new(mode, (16, 12), color_key)
+            source.paste(opaque_color, (8, 0, 16, 12))
+            buf = io.BytesIO()
+            source.save(buf, "PNG", transparency=color_key)
+            buf.seek(0)
+            with Image.open(buf) as loaded:
+                self.assertIn("transparency", loaded.info)
+                for normalizer in (flatten_alpha_channel, clean_image_buffer):
+                    for background in ((255, 255, 255), (32, 64, 96)):
+                        with self.subTest(mode=mode, key=color_key, normalizer=normalizer.__name__, background=background):
+                            result = normalizer(loaded, background)
+                            self.assertEqual(result.mode, "RGB")
+                            self.assertEqual(result.getpixel((2, 2)), background)
+                            expected_opaque = (opaque_color,) * 3 if mode == "L" else opaque_color
+                            self.assertEqual(result.getpixel((12, 2)), expected_opaque)
+
+    def test_rgb_png_transparency_survives_icc_conversion(self):
+        """Color management must retain the tRNS alpha mask before changing RGB values."""
+        source = Image.new("RGB", (16, 12), (10, 20, 30))
+        source.paste((220, 80, 30), (8, 0, 16, 12))
+        buf = io.BytesIO()
+        icc = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+        source.save(buf, "PNG", transparency=(10, 20, 30), icc_profile=icc)
+        buf.seek(0)
+        with Image.open(buf) as loaded:
+            converted = convert_icc_to_srgb(loaded)
+            self.assertIn("A", converted.getbands())
+            self.assertEqual(converted.getpixel((2, 2))[3], 0)
+            self.assertEqual(converted.getpixel((12, 2))[3], 255)
+            self.assertEqual(flatten_alpha_channel(converted).getpixel((2, 2)), (255,) * 3)
+
+    def test_png_color_key_transparency_survives_downscaling(self):
+        """Resampling tRNS inputs must match explicit RGBA inputs without dark edge halos."""
+        for mode, color_key, opaque_color in (("RGB", (0, 0, 0), (220, 80, 30)), ("L", 0, 180)):
+            with self.subTest(mode=mode):
+                source = Image.new(mode, (24, 16), color_key)
+                source.paste(opaque_color, (12, 0, 24, 16))
+                buf = io.BytesIO()
+                source.save(buf, "PNG", transparency=color_key)
+                buf.seek(0)
+                with Image.open(buf) as loaded:
+                    expected = clean_image_buffer(loaded.convert("RGBA"), max_dimension=12)
+                    actual = clean_image_buffer(loaded, max_dimension=12)
+                    self.assertEqual(actual.size, (12, 8))
+                    np.testing.assert_array_equal(np.asarray(actual), np.asarray(expected))
+
+    def test_rgb_png_transparency_in_jpeg_export(self):
+        """The full file pipeline must use the configured background for RGB PNG tRNS."""
+        config = ProcessingConfig(
+            aspect_ratio=AspectRatio.ORIGINAL,
+            disrupt_strength=0,
+            grain_strength=0,
+            aberration_px=0,
+            vignette_strength=0,
+            enable_photonic_grade=False,
+            alpha_background=(32, 64, 96),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = os.path.join(tmpdir, "transparent_rgb.png")
+            output_path = os.path.join(tmpdir, "result.jpg")
+            Image.new("RGB", (32, 32), (0, 0, 0)).save(source_path, "PNG", transparency=(0, 0, 0))
+            InstaOptimizer().process_file(source_path, output_path, config)
+            with Image.open(output_path) as result:
+                np.testing.assert_allclose(result.getpixel((16, 16)), config.alpha_background, atol=2)
 
     def test_metadata_mode_no_exif(self):
         """Verify that MetadataMode.NO_EXIF returns 0 bytes of EXIF and leaves no APP1 EXIF segment."""

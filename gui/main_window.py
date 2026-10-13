@@ -3,19 +3,20 @@
 import os
 import subprocess
 from typing import List, Optional
-from PIL import Image
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame,
-    QLabel, QPushButton, QProgressBar, QMessageBox, QSplitter
+    QLabel, QPushButton, QProgressBar, QMessageBox, QSplitter,
+    QCheckBox, QScrollArea, QButtonGroup
 )
 from PySide6.QtCore import Qt, QThread, Signal, Slot, QUrl, QTimer
 from PySide6.QtGui import QDesktopServices, QIcon
 
 
-from core.insta_optimizer import InstaOptimizer, ProcessingConfig, validate_image_dimensions
+from core.insta_optimizer import InstaOptimizer, ProcessingConfig, PreviewResult
+from core.exif_spoofer import MetadataMode
+from core.version import APP_VERSION
 from core.pipeline import BatchPipeline, ProcessItemResult
-from core.c2pa_killer import clean_image_buffer
 from gui.theme import DARK_THEME_QSS, apply_windows_dark_titlebar
 from gui.icon_utils import get_app_icon
 from gui.components.drop_zone import DropZoneWidget
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 class PreviewWorker(QThread):
     """Generates processed preview for the comparison slider in background."""
 
-    preview_ready = Signal(int, str, object)  # (generation_id, image_path, PIL.Image)
+    preview_ready = Signal(int, str, object)  # (generation_id, image_path, PreviewResult)
     preview_failed = Signal(int, str, str)    # (generation_id, image_path, error_message)
 
     def __init__(self, optimizer: InstaOptimizer, image_path: str, config: ProcessingConfig, generation: int):
@@ -44,19 +45,8 @@ class PreviewWorker(QThread):
 
     def run(self):
         try:
-            with Image.open(self.image_path) as src:
-                validate_image_dimensions(src)
-                src.load()
-                # Downscale for instant preview responsiveness if original is huge
-                w, h = src.size
-                if max(w, h) > 1600:
-                    scale = 1600 / max(w, h)
-                    src_preview = src.resize((int(w * scale), int(h * scale)), Image.BILINEAR)
-                else:
-                    src_preview = src.copy()
-
-                processed_img, _ = self.optimizer.process_pil(src_preview, self.config)
-                self.preview_ready.emit(self.generation, self.image_path, processed_img)
+            result = self.optimizer.process_preview_file(self.image_path, self.config)
+            self.preview_ready.emit(self.generation, self.image_path, result)
         except Exception as e:
             logger.exception("PreviewWorker generation %d failed for %s: %s", self.generation, self.image_path, e)
             self.preview_failed.emit(self.generation, self.image_path, str(e))
@@ -97,9 +87,9 @@ class BatchProcessWorker(QThread):
 class MainWindow(QMainWindow):
     """Primary application window for Reelsator."""
 
-    def __init__(self):
+    def __init__(self, preset_store=None):
         super().__init__()
-        self.setWindowTitle("Reelsator")
+        self.setWindowTitle(f"Reelsator {APP_VERSION}")
         self.resize(1260, 840)
         self.setMinimumSize(1020, 680)
 
@@ -122,6 +112,8 @@ class MainWindow(QMainWindow):
         self._current_preview_worker: Optional[PreviewWorker] = None
         self._pending_preview: bool = False
         self._batch_worker: Optional[BatchProcessWorker] = None
+        self._preview_result: Optional[PreviewResult] = None
+        self._batch_output_dir: Optional[str] = None
 
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
@@ -134,14 +126,14 @@ class MainWindow(QMainWindow):
         self._preview_signals_disconnected: bool = False
         self._connected_close_workers: set = set()
 
-        self._init_ui()
+        self._init_ui(preset_store)
 
     def showEvent(self, event):
         super().showEvent(event)
         # Apply Windows 11 seamless titlebar matching the #121316 dark background
         apply_windows_dark_titlebar(int(self.winId()), bg_color=0x00161312, hide_title_text=True)
 
-    def _init_ui(self):
+    def _init_ui(self, preset_store=None):
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
 
@@ -173,9 +165,46 @@ class MainWindow(QMainWindow):
 
         self.comparison_slider = ComparisonSliderWidget(self)
         self.comparison_slider.setVisible(False)
+        self.comparison_slider.setToolTip(
+            "До и после обработки показан один и тот же кадр. "
+            "В масштабе 100% используйте полосы прокрутки для просмотра деталей."
+        )
+
+        self.preview_toolbar = QWidget(self)
+        toolbar_layout = QHBoxLayout(self.preview_toolbar)
+        toolbar_layout.setContentsMargins(4, 0, 4, 4)
+        toolbar_layout.setSpacing(8)
+        self.btn_preview_fit = QPushButton("Вписать", self)
+        self.btn_preview_100 = QPushButton("100%", self)
+        self.preview_zoom_group = QButtonGroup(self)
+        for button in (self.btn_preview_fit, self.btn_preview_100):
+            button.setObjectName("pillButton")
+            button.setCheckable(True)
+            self.preview_zoom_group.addButton(button)
+            toolbar_layout.addWidget(button)
+        self.btn_preview_fit.setChecked(True)
+        self.btn_preview_fit.clicked.connect(lambda: self._set_preview_zoom(False))
+        self.btn_preview_100.clicked.connect(lambda: self._set_preview_zoom(True))
+        self.chk_jpeg_preview = QCheckBox("После JPEG", self)
+        self.chk_jpeg_preview.setChecked(True)
+        self.chk_jpeg_preview.setToolTip("Показывает изображение после того же JPEG-сжатия, что применяется при сохранении.")
+        self.chk_jpeg_preview.toggled.connect(self._display_preview_result)
+        toolbar_layout.addWidget(self.chk_jpeg_preview)
+        toolbar_layout.addStretch()
+        self.lbl_preview_info = QLabel("", self)
+        toolbar_layout.addWidget(self.lbl_preview_info)
+        self.preview_toolbar.setVisible(False)
+
+        self.preview_scroll = QScrollArea(self)
+        self.preview_scroll.setFrameShape(QFrame.NoFrame)
+        self.preview_scroll.setWidgetResizable(True)
+        self.preview_scroll.setAlignment(Qt.AlignCenter)
+        self.preview_scroll.setWidget(self.comparison_slider)
+        self.preview_scroll.setVisible(False)
 
         preview_card_layout.addWidget(self.drop_zone)
-        preview_card_layout.addWidget(self.comparison_slider)
+        preview_card_layout.addWidget(self.preview_toolbar)
+        preview_card_layout.addWidget(self.preview_scroll)
         left_layout.addWidget(self.preview_card, stretch=5)
 
         # Bottom Batch Queue List
@@ -192,7 +221,7 @@ class MainWindow(QMainWindow):
         right_layout.setContentsMargins(8, 0, 0, 0)
         right_layout.setSpacing(12)
 
-        self.settings_panel = SettingsPanelWidget(self)
+        self.settings_panel = SettingsPanelWidget(self, preset_store=preset_store)
         self.settings_panel.config_changed.connect(self._on_config_changed)
         right_layout.addWidget(self.settings_panel, stretch=1)
 
@@ -251,7 +280,7 @@ class MainWindow(QMainWindow):
         title.setObjectName("titleLabel")
         title.setStyleSheet("background: transparent; border: none;")
 
-        subtitle = QLabel("Instagram AI Photo Preparation Studio", self)
+        subtitle = QLabel(f"Photo Studio • {APP_VERSION}", self)
         subtitle.setObjectName("subtitleLabel")
         subtitle.setStyleSheet("background: transparent; border: none;")
 
@@ -262,13 +291,13 @@ class MainWindow(QMainWindow):
         hdr.addStretch()
 
         # Badges
-        badge_c2pa = QLabel(" C2PA SANITIZER: АКТИВЕН", self)
+        badge_c2pa = QLabel(" JPEG • 4:2:0", self)
         badge_c2pa.setObjectName("badgeOk")
         hdr.addWidget(badge_c2pa)
 
-        badge_exif = QLabel(" IPHONE 15/16 PRO: ГОТОВ", self)
-        badge_exif.setObjectName("badgeOk")
-        hdr.addWidget(badge_exif)
+        self.lbl_metadata_badge = QLabel(" EXIF: sRGB", self)
+        self.lbl_metadata_badge.setObjectName("badgeOk")
+        hdr.addWidget(self.lbl_metadata_badge)
 
         btn_github = QPushButton(" GitHub", self)
         btn_github.setIcon(get_app_icon("star", "muted", 13))
@@ -302,6 +331,8 @@ class MainWindow(QMainWindow):
         # Show comparison view
         self.drop_zone.setVisible(False)
         self.comparison_slider.setVisible(True)
+        self.preview_toolbar.setVisible(True)
+        self.preview_scroll.setVisible(True)
 
         self.btn_process.setEnabled(True)
         self.lbl_status.setText(f"Загружено файлов: {len(self._active_files)}. Готовы к обработке.")
@@ -322,7 +353,15 @@ class MainWindow(QMainWindow):
             return
         self._active_files.clear()
         self._current_preview_file = None
+        self._preview_result = None
+        self._preview_generation += 1
+        self._preview_timer.stop()
+        self._pending_preview = False
+        self.optimizer.source_cache.clear()
+        self.comparison_slider.clear_images()
         self.comparison_slider.setVisible(False)
+        self.preview_toolbar.setVisible(False)
+        self.preview_scroll.setVisible(False)
         self.drop_zone.setVisible(True)
         self.btn_process.setEnabled(False)
         self.btn_open_folder.setVisible(False)
@@ -336,22 +375,17 @@ class MainWindow(QMainWindow):
             return
 
         self._current_preview_file = file_path
-        try:
-            with Image.open(file_path) as img:
-                validate_image_dimensions(img)
-                # Normalize physical orientation, color profile, and alpha channel
-                # so the Before image matches the pipeline's internal input representation
-                normalized_img = clean_image_buffer(img)
-                self.comparison_slider.set_images(normalized_img)
-            self._trigger_preview_update()
-        except ValueError as e:
-            logger.warning("Attempted to load oversized image for preview: %s", e)
-            QMessageBox.warning(self, "Слишком большое изображение", str(e))
-        except Exception as e:
-            QMessageBox.warning(self, "Ошибка чтения", f"Не удалось открыть файл:\n{e}")
+        self.comparison_slider.clear_images()
+        self._trigger_preview_update()
 
     def _on_config_changed(self, cfg: ProcessingConfig):
-        """Settings or preset changed: update live preview."""
+        """Settings or preset changed: update live preview and actual metadata mode."""
+        if cfg.metadata_mode == MetadataMode.NO_EXIF:
+            self.lbl_metadata_badge.setText(" EXIF: выкл.")
+        elif cfg.metadata_mode == MetadataMode.SYNTHETIC_CAMERA:
+            self.lbl_metadata_badge.setText(f" EXIF: {cfg.camera_preset.value}")
+        else:
+            self.lbl_metadata_badge.setText(" EXIF: sRGB")
         if getattr(self, "_is_closing", False):
             return
         if self._current_preview_file:
@@ -364,6 +398,9 @@ class MainWindow(QMainWindow):
             return
         # Immediately increment generation ID so any in-flight preview results for older configs are rejected instantly
         self._preview_generation += 1
+        self._preview_result = None
+        self.comparison_slider.clear_after_image()
+        self.lbl_preview_info.setText("Обновление…")
         # Debounce slider changes (200 ms)
         self._preview_timer.start()
 
@@ -379,6 +416,7 @@ class MainWindow(QMainWindow):
             return
 
         self._pending_preview = False
+        self._preview_timer.stop()
         self._preview_signals_disconnected = False
         gen = self._preview_generation
         cfg = self.settings_panel.get_current_config()
@@ -399,23 +437,45 @@ class MainWindow(QMainWindow):
         if getattr(self, "_is_closing", False):
             return
 
+        if self._current_preview_file is None:
+            self.optimizer.source_cache.clear()
+
         # If a newer configuration arrived while worker was executing, run it now
         if self._pending_preview and self._current_preview_file:
             self._pending_preview = False
             self._run_preview_worker()
 
     @Slot(int, str, object)
-    def _on_preview_ready(self, generation: int, image_path: str, processed_img):
+    def _on_preview_ready(self, generation: int, image_path: str, result: PreviewResult):
         if getattr(self, "_is_closing", False):
             return
         if generation == self._preview_generation and image_path == self._current_preview_file:
-            self.comparison_slider.set_after_image(processed_img)
+            self._preview_result = result
+            self._display_preview_result()
+
+    def _display_preview_result(self, *_):
+        if self._is_closing or self._preview_result is None:
+            return
+        result = self._preview_result
+        after = result.jpeg if self.chk_jpeg_preview.isChecked() else result.processed
+        self.comparison_slider.set_images(result.before, after)
+        if self.chk_jpeg_preview.isChecked():
+            self.lbl_preview_info.setText(f"JPEG {result.jpeg_quality} · {result.jpeg_size_bytes / 1024:.0f} КБ")
+        else:
+            self.lbl_preview_info.setText("До JPEG-сжатия")
+
+    def _set_preview_zoom(self, actual_pixels: bool):
+        self.preview_scroll.setWidgetResizable(not actual_pixels)
+        self.comparison_slider.set_zoom_100(actual_pixels)
 
     @Slot(int, str, str)
     def _on_preview_failed(self, generation: int, image_path: str, error_msg: str):
         if getattr(self, "_is_closing", False):
             return
         if generation == self._preview_generation and image_path == self._current_preview_file:
+            self._preview_result = None
+            self.lbl_preview_info.setText("Ошибка предпросмотра")
+            self.comparison_slider.clear_images()
             self.lbl_status.setText(f"Ошибка предпросмотра: {error_msg}")
 
     def _start_batch_processing(self):
@@ -438,6 +498,8 @@ class MainWindow(QMainWindow):
         self.btn_open_folder.setVisible(False)
         self.batch_list.btn_clear.setEnabled(False)
         self.drop_zone.setEnabled(False)
+        self.settings_panel.setEnabled(False)
+        self._batch_output_dir = out_dir
         self.progress_bar.setVisible(True)
         self.progress_bar.setMaximum(len(batch_files))
         self.progress_bar.setValue(0)
@@ -474,6 +536,7 @@ class MainWindow(QMainWindow):
         self.btn_open_folder.setVisible(True)
         self.batch_list.btn_clear.setEnabled(True)
         self.drop_zone.setEnabled(True)
+        self.settings_panel.setEnabled(True)
 
         success_count = sum(1 for r in results if r.success)
         cancelled_count = sum(1 for r in results if r.error_message == "Отменено пользователем")
@@ -489,7 +552,7 @@ class MainWindow(QMainWindow):
                 f"Успешно обработано: {success_count} из {len(results)}\n"
                 f"Отменено: {cancelled_count}\n"
                 f"Ошибок: {failed_count}\n\n"
-                f"Папка сохранения:\n{self.settings_panel.get_output_dir()}",
+                f"Папка сохранения:\n{self._batch_output_dir}",
             )
         else:
             status_text = f"🎉 Готово! Успешно: {success_count} из {len(results)} фото."
@@ -501,11 +564,11 @@ class MainWindow(QMainWindow):
                 "Обработка завершена",
                 f"Успешно обработано: {success_count} из {len(results)} файлов.\n"
                 f"Ошибок: {failed_count}\n\n"
-                f"Папка сохранения:\n{self.settings_panel.get_output_dir()}",
+                f"Папка сохранения:\n{self._batch_output_dir}",
             )
 
     def _open_output_folder(self):
-        folder = self.settings_panel.get_output_dir()
+        folder = self._batch_output_dir or self.settings_panel.get_output_dir()
         if os.path.exists(folder):
             if os.name == "nt":
                 os.startfile(folder)
@@ -590,4 +653,6 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
 
+        self._preview_result = None
+        self.optimizer.source_cache.clear()
         super().closeEvent(event)

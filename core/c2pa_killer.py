@@ -41,15 +41,20 @@ DISALLOWED_PNG_CHUNKS = {
 }
 
 
+def _promote_transparency(image: Image.Image) -> Image.Image:
+    """Expand PNG tRNS transparency before resampling or color conversion changes its color key."""
+    if image.mode in ("P", "RGB", "L") and "transparency" in image.info:
+        return image.convert("RGBA")
+    return image
+
+
 def convert_icc_to_srgb(image: Image.Image) -> Image.Image:
     """Converts image from its embedded ICC color space (e.g. Display-P3, AdobeRGB) to standard sRGB.
 
     If no ICC profile is present, returns image unchanged.
     Safely falls back if the ICC profile is invalid or corrupted.
     """
-    # If palette image with transparency, promote to RGBA first to preserve alpha during color conversion
-    if image.mode == "P" and "transparency" in image.info:
-        image = image.convert("RGBA")
+    image = _promote_transparency(image)
 
     icc = image.info.get("icc_profile")
     if not icc:
@@ -69,9 +74,7 @@ def convert_icc_to_srgb(image: Image.Image) -> Image.Image:
 
 def flatten_alpha_channel(image: Image.Image, background: Tuple[int, int, int] = (255, 255, 255)) -> Image.Image:
     """Composites transparent image over a solid background color (default: white) to prevent black artifacts in JPEG."""
-    # Palette image with transparency chunk (tRNS)
-    if image.mode == "P" and "transparency" in image.info:
-        image = image.convert("RGBA")
+    image = _promote_transparency(image)
 
     if "A" not in image.getbands():
         return image.convert("RGB") if image.mode != "RGB" else image
@@ -210,9 +213,8 @@ def clean_image_buffer(
     immediately after EXIF transposition to prevent excess RAM usage during ICC conversion,
     alpha compositing, and full-resolution numpy array allocation.
     """
-    # 0. Promote palette image with transparency early so operations retain alpha
-    if image.mode == "P" and "transparency" in image.info:
-        image = image.convert("RGBA")
+    # 0. Expand palette and color-key transparency before resampling changes pixel values
+    image = _promote_transparency(image)
 
     # 1. Normalize physical orientation based on EXIF tag before stripping
     try:
